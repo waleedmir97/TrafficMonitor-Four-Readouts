@@ -969,10 +969,85 @@ static int GetMonitorTimerCount(int second)
     return count;
 }
 
+bool CTrafficMonitorDlg::GetPrimaryNetworkCounters(
+    unsigned __int64& in_bytes,
+    unsigned __int64& out_bytes,
+    NET_IFINDEX& interface_index)
+{
+    in_bytes = 0;
+    out_bytes = 0;
+    interface_index = 0;
+
+    DWORD best_interface{};
+    if (::GetBestInterface(0x08080808, &best_interface) == NO_ERROR)
+    {
+        MIB_IF_ROW2 row{};
+        row.InterfaceIndex = best_interface;
+        if (::GetIfEntry2(&row) == NO_ERROR && row.OperStatus == IfOperStatusUp)
+        {
+            in_bytes = row.InOctets;
+            out_bytes = row.OutOctets;
+            interface_index = row.InterfaceIndex;
+            return true;
+        }
+    }
+
+    PMIB_IF_TABLE2 table{};
+    if (::GetIfTable2(&table) != NO_ERROR || table == nullptr)
+        return false;
+
+    const MIB_IF_ROW2* selected{};
+    for (ULONG i = 0; i < table->NumEntries; ++i)
+    {
+        const MIB_IF_ROW2& row = table->Table[i];
+        const bool connected = row.OperStatus == IfOperStatusUp &&
+            row.MediaConnectState == MediaConnectStateConnected;
+        const bool usable = connected &&
+            row.Type != IF_TYPE_SOFTWARE_LOOPBACK &&
+            row.Type != IF_TYPE_TUNNEL &&
+            !row.InterfaceAndOperStatusFlags.FilterInterface;
+        if (!usable)
+            continue;
+
+        if (selected == nullptr ||
+            (row.InterfaceAndOperStatusFlags.HardwareInterface &&
+                !selected->InterfaceAndOperStatusFlags.HardwareInterface) ||
+            (row.InterfaceAndOperStatusFlags.HardwareInterface ==
+                selected->InterfaceAndOperStatusFlags.HardwareInterface &&
+                row.InOctets + row.OutOctets > selected->InOctets + selected->OutOctets))
+        {
+            selected = &row;
+        }
+    }
+
+    const bool found = selected != nullptr;
+    if (found)
+    {
+        in_bytes = selected->InOctets;
+        out_bytes = selected->OutOctets;
+        interface_index = selected->InterfaceIndex;
+    }
+    ::FreeMibTable(table);
+    return found;
+}
+
 
 void CTrafficMonitorDlg::DoMonitorAcquisition()
 {
     //获取网络连接速度
+#ifdef WITHOUT_TEMPERATURE
+    NET_IFINDEX sampled_interface_index{};
+    if (!GetPrimaryNetworkCounters(m_in_bytes, m_out_bytes, sampled_interface_index))
+    {
+        m_in_bytes = 0;
+        m_out_bytes = 0;
+    }
+    if (sampled_interface_index != m_primary_interface_index)
+    {
+        m_connection_change_flag = true;
+        m_primary_interface_index = sampled_interface_index;
+    }
+#else
     int rtn{};
     auto getLfTable = [&]() {
         __try
@@ -1016,6 +1091,7 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
             m_out_bytes += table.dwOutOctets;
         }
     }
+#endif
 
     unsigned __int64 cur_in_speed{}, cur_out_speed{};       //本次监控时间间隔内的上传和下载速度
 
@@ -1044,6 +1120,8 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
     if (last_net_speed_time != 0)
         time_span = static_cast<int>(net_speed_time - last_net_speed_time);
     last_net_speed_time = net_speed_time;
+    if (time_span <= 0)
+        time_span = 1000;
 
     //将当前监控时间间隔的流量转换成每秒时间间隔内的流量
     theApp.m_in_speed = static_cast<unsigned __int64>(cur_in_speed * 1000 / time_span);
@@ -1055,6 +1133,7 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
     m_last_out_bytes = m_out_bytes;
 
     //处于自动选择状态时，如果连续30秒没有网速，则可能自动选择的网络不对，此时执行一次自动选择
+#ifndef WITHOUT_TEMPERATURE
     if (theApp.m_cfg_data.m_auto_select)
     {
         if (cur_in_speed == 0 && cur_out_speed == 0)
@@ -1118,33 +1197,30 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
             CCommon::WriteLog(info, theApp.m_log_path.c_str());
         }
     }
-
-    bool lite_version = false;
-#ifdef WITHOUT_TEMPERATURE
-    lite_version = true;
 #endif
 
+#ifdef WITHOUT_TEMPERATURE
+    // The taskbar-only build samples only values that it displays.
+    theApp.m_cpu_usage = m_cpu_usage_helper.GetCpuUsage();
+    if (!m_gpu_usage_helper.GetGpuUsage(theApp.m_gpu_usage))
+        theApp.m_gpu_usage = -1;
+#else
     bool cpu_usage_acquired = false;
     bool cpu_freq_acquired = false;
     bool gpu_usage_acquired = false;
     m_get_disk_usage_by_pdh = false;
 
-    //获取CPU使用率
-    if (lite_version || theApp.m_general_data.cpu_usage_acquire_method != GeneralSettingData::CA_HARDWARE_MONITOR || !theApp.m_general_data.IsHardwareEnable(HI_CPU))
+    if (theApp.m_general_data.cpu_usage_acquire_method != GeneralSettingData::CA_HARDWARE_MONITOR ||
+        !theApp.m_general_data.IsHardwareEnable(HI_CPU))
     {
         theApp.m_cpu_usage = m_cpu_usage_helper.GetCpuUsage();
         cpu_usage_acquired = true;
     }
 
-    //获取CPU频率
-    //if (lite_version || is_arm64ec || !theApp.m_general_data.IsHardwareEnable(HI_CPU))
-    //{
     if (m_cpu_freq_helper.GetCpuFreq(theApp.m_cpu_freq))
         cpu_freq_acquired = true;
-    //}
 
-    //获取GPU利用率
-    if (lite_version /*|| is_arm64ec*/ || !theApp.m_general_data.IsHardwareEnable(HI_GPU))
+    if (!theApp.m_general_data.IsHardwareEnable(HI_GPU))
     {
         if (m_gpu_usage_helper.GetGpuUsage(theApp.m_gpu_usage))
             gpu_usage_acquired = true;
@@ -1152,8 +1228,7 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
             theApp.m_gpu_usage = -1;
     }
 
-    //获取硬盘利用率
-    if (lite_version /*|| is_arm64ec*/ || !theApp.m_general_data.IsHardwareEnable(HI_HDD))
+    if (!theApp.m_general_data.IsHardwareEnable(HI_HDD))
     {
         int disk_index = m_disk_usage_helper.FindDiskIndex(theApp.m_general_data.hard_disk_name);
         //没有找到要监控的硬盘时默认使用总体利用率
@@ -1180,14 +1255,25 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
         else
             theApp.m_hdd_usage = -1;
     }
+#endif
 
     //获取内存利用率
-    MEMORYSTATUSEX statex;
+    MEMORYSTATUSEX statex{};
     statex.dwLength = sizeof(statex);
-    GlobalMemoryStatusEx(&statex);
-    theApp.m_memory_usage = statex.dwMemoryLoad;
-    theApp.m_used_memory = static_cast<int>((statex.ullTotalPhys - statex.ullAvailPhys) / 1024);
-    theApp.m_total_memory = static_cast<int>(statex.ullTotalPhys / 1024);
+    if (GlobalMemoryStatusEx(&statex) && statex.ullTotalPhys != 0)
+    {
+        const unsigned __int64 used_memory = statex.ullTotalPhys - statex.ullAvailPhys;
+        theApp.m_memory_usage = static_cast<int>(
+            (used_memory * 100 + statex.ullTotalPhys / 2) / statex.ullTotalPhys);
+        theApp.m_used_memory = static_cast<int>(used_memory / 1024);
+        theApp.m_total_memory = static_cast<int>(statex.ullTotalPhys / 1024);
+    }
+    else
+    {
+        theApp.m_memory_usage = -1;
+        theApp.m_used_memory = 0;
+        theApp.m_total_memory = 0;
+    }
 
 #ifndef WITHOUT_TEMPERATURE
     //获取温度
@@ -1281,6 +1367,7 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
     }
 #endif
 
+#ifndef WITHOUT_TEMPERATURE
     //通知插件获取数据，以及向插件传递监控数据
     for (const auto& plugin_info : theApp.m_plugins.GetPlugins())
     {
@@ -1302,7 +1389,9 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
             plugin_info.plugin->OnMonitorInfo(monitor_info);
         }
     }
+#endif
 
+    theApp.PublishPerformanceSnapshot();
     m_monitor_time_cnt++;
 
     //发送监控信息更新消息
@@ -1314,25 +1403,13 @@ UINT CTrafficMonitorDlg::MonitorThreadCallback(LPVOID dwUser)
     CTrafficMonitorDlg* pThis = (CTrafficMonitorDlg*)dwUser;
     while (true)
     {
-        //获取一次监控数据
-        if (pThis->m_monitor_data_required)
-        {
-            pThis->DoMonitorAcquisition();
-            //获取到监控数据后重置flag
-            pThis->m_monitor_data_required = false;
-        }
-        else
-        {
-            Sleep(10);
-        }
-
-        // 检查退出标志
+        ::WaitForSingleObject(pThis->m_monitorRequestEvent.m_hObject, INFINITE);
         if (pThis->m_is_thread_exit)
         {
-            // 触发事件，通知主线程工作线程已退出
             pThis->m_threadExitEvent.SetEvent();
             return 0;
         }
+        pThis->DoMonitorAcquisition();
     }
 
     return 0;
@@ -1343,6 +1420,7 @@ void CTrafficMonitorDlg::ExitMonitorThread()
 {
     // 通知线程退出
     m_is_thread_exit = true;
+    m_monitorRequestEvent.SetEvent();
 
     // 等待线程退出
     ::WaitForSingleObject(m_threadExitEvent.m_hObject, 1000);
@@ -1354,8 +1432,7 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
     // TODO: 在此添加消息处理程序代码和/或调用默认值
     if (nIDEvent == MONITOR_TIMER)
     {
-        //通知线程获取监控数据
-        m_monitor_data_required = true;
+        m_monitorRequestEvent.SetEvent();
     }
 
     if (nIDEvent == MAIN_TIMER)
@@ -1753,7 +1830,6 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
             }
 
             m_tBarDlg->AdjustWindowPos();
-            m_tBarDlg->Invalidate(FALSE);
         }
     }
 
@@ -2555,7 +2631,10 @@ afx_msg LRESULT CTrafficMonitorDlg::OnMonitorInfoUpdated(WPARAM wParam, LPARAM l
     }
     //更新任务栏窗口鼠标提示
     if (IsTaskbarWndValid())
+    {
         m_tBarDlg->UpdateToolTips();
+        m_tBarDlg->Invalidate(FALSE);
+    }
     return 0;
 }
 

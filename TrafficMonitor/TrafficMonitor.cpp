@@ -91,9 +91,9 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_main_wnd_data.double_click_action = DoubleClickAction::NONE;
     m_debug_log = false;
 
-    m_taskbar_data.display_item = DisplayItemSet{ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE };
+    m_taskbar_data.display_item = DisplayItemSet{ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY };
     m_taskbar_data.plugin_display_item.data().clear();
-    m_taskbar_data.item_order.SetOrder({ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE });
+    m_taskbar_data.item_order.SetOrder({ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY });
     m_taskbar_data.show_taskbar_wnd_in_secondary_display = false;
     m_taskbar_data.secondary_display_index = 0;
     m_taskbar_data.font.name = L"Segoe UI";
@@ -106,9 +106,10 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_taskbar_data.disp_str.Get(TDI_DOWN) = L"\x2193: ";
     m_taskbar_data.disp_str.Get(TDI_CPU) = L"CPU: ";
     m_taskbar_data.disp_str.Get(TDI_GPU_USAGE) = L"GPU: ";
+    m_taskbar_data.disp_str.Get(TDI_MEMORY) = L"RAM: ";
     m_taskbar_data.specify_each_item_color = true;
     const COLORREF text_color = CWindowsSettingHelper::IsWindows10LightTheme() ? RGB(0, 0, 0) : RGB(255, 255, 255);
-    for (const auto item : { TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE })
+    for (const auto item : { TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY })
         m_taskbar_data.text_colors[item] = TaskbarItemColor{ text_color, text_color };
     m_taskbar_data.back_color = TASKBAR_TRANSPARENT_COLOR1;
     m_taskbar_data.transparent_color = TASKBAR_TRANSPARENT_COLOR1;
@@ -121,6 +122,7 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_taskbar_data.speed_unit = SpeedUnit::AUTO;
     m_taskbar_data.hide_unit = false;
     m_taskbar_data.hide_percent = false;
+    m_taskbar_data.memory_display = MemoryDisplay::USAGE_PERCENTAGE;
     m_taskbar_data.value_right_align = true;
     m_taskbar_data.horizontal_arrange = false;
     m_taskbar_data.show_status_bar = false;
@@ -141,6 +143,26 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_taskbar_data.enable_colorful_emoji = false;
     m_taskbar_data.double_click_action = DoubleClickAction::NONE;
     m_taksbar_transparent_color_enable = true;
+}
+
+void CTrafficMonitorApp::PublishPerformanceSnapshot()
+{
+    CSingleLock lock(&m_performance_snapshot_critical, TRUE);
+    ++m_performance_snapshot.sequence;
+    m_performance_snapshot.sampled_at_ms = CCommon::GetCurrentTimeSinceEpochMilliseconds();
+    m_performance_snapshot.in_speed = m_in_speed;
+    m_performance_snapshot.out_speed = m_out_speed;
+    m_performance_snapshot.cpu_usage = m_cpu_usage;
+    m_performance_snapshot.memory_usage = m_memory_usage;
+    m_performance_snapshot.used_memory = m_used_memory;
+    m_performance_snapshot.total_memory = m_total_memory;
+    m_performance_snapshot.gpu_usage = m_gpu_usage;
+}
+
+PerformanceSnapshot CTrafficMonitorApp::GetPerformanceSnapshot() const
+{
+    CSingleLock lock(&m_performance_snapshot_critical, TRUE);
+    return m_performance_snapshot;
 }
 
 void CTrafficMonitorApp::LoadConfig()
@@ -377,7 +399,7 @@ void CTrafficMonitorApp::LoadConfig()
 
 void CTrafficMonitorApp::SaveConfig()
 {
-    // The fixed four-readout build has no user-facing settings to persist.
+    // The fixed five-readout build has no user-facing display settings to persist.
     return;
 
 #if 0
@@ -565,10 +587,28 @@ void CTrafficMonitorApp::LoadGlobalConfig()
     CIniHelper ini{ global_cfg_path };
     m_general_data.portable_mode = ini.GetBool(L"config", L"portable_mode", portable_mode_default);
 
-    CRegKey settings_key;
     DWORD auto_start_enabled{ 1 };
-    if (settings_key.Open(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts") == ERROR_SUCCESS)
-        settings_key.QueryDWORDValue(L"AutoStartEnabled", auto_start_enabled);
+    CRegKey settings_key;
+    LSTATUS auto_start_status = ERROR_FILE_NOT_FOUND;
+    bool legacy_auto_start_loaded{ false };
+    if (settings_key.Open(HKEY_CURRENT_USER, L"Software\\PerformanceMonitor") == ERROR_SUCCESS)
+        auto_start_status = settings_key.QueryDWORDValue(L"AutoStartEnabled", auto_start_enabled);
+    if (auto_start_status != ERROR_SUCCESS)
+    {
+        settings_key.Close();
+        if (settings_key.Open(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts") == ERROR_SUCCESS)
+            legacy_auto_start_loaded =
+                settings_key.QueryDWORDValue(L"AutoStartEnabled", auto_start_enabled) == ERROR_SUCCESS;
+    }
+    settings_key.Close();
+
+    CRegKey new_settings_key;
+    bool new_setting_saved =
+        new_settings_key.Create(HKEY_CURRENT_USER, L"Software\\PerformanceMonitor") == ERROR_SUCCESS &&
+        new_settings_key.SetDWORDValue(L"AutoStartEnabled", auto_start_enabled) == ERROR_SUCCESS;
+    if (legacy_auto_start_loaded && new_setting_saved)
+        RegDeleteTree(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts");
+
     m_auto_start_enabled = (auto_start_enabled != 0);
 
     //执行一次保存操作，以检查当前目录是否有写入权限
@@ -745,7 +785,7 @@ bool  CTrafficMonitorApp::SetAutoRun(bool auto_run)
 bool CTrafficMonitorApp::SetAutoStartEnabled(bool enabled)
 {
     CRegKey settings_key;
-    if (settings_key.Create(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts") != ERROR_SUCCESS
+    if (settings_key.Create(HKEY_CURRENT_USER, L"Software\\PerformanceMonitor") != ERROR_SUCCESS
         || settings_key.SetDWORDValue(L"AutoStartEnabled", enabled ? 1 : 0) != ERROR_SUCCESS)
     {
         return false;
@@ -778,7 +818,7 @@ bool CTrafficMonitorApp::GetAutoRun(wstring* auto_run_path)
             //去掉前后的引号
             if (auto_run_path->front() == L'\"')
                 *auto_run_path = auto_run_path->substr(1);
-            if (auto_run_path->back() = L'\"')
+            if (auto_run_path->back() == L'\"')
                 auto_run_path->pop_back();
         }
         return (m_module_path_reg == buff); //如果“TrafficMonitor”的值是当前程序的路径，就返回true，否则返回false
@@ -1067,6 +1107,11 @@ BOOL CTrafficMonitorApp::InitInstance()
 
     //初始化字符串资源
     m_str_table.Init();
+    m_str_table.SetText(IDS_TRAFFICMONITOR, APP_NAME);
+    m_str_table.SetText(L"TXT_TITLE_ABOUT", L"About Performance Monitor");
+    m_str_table.SetText(L"TXT_ABOUT_VERSION", L"Performance Monitor<%1%>, V<%2%>");
+    m_str_table.SetText(L"TXT_TRAFFICMONITOR_ALREAD_RUNING", L"Performance Monitor is already running.");
+    m_str_table.SetText(IDS_TRAFFICMONITOR_PLUGIN_NITIFICATION, L"Performance Monitor notification");
 
 
     //从ini文件载入设置
@@ -1106,6 +1151,11 @@ BOOL CTrafficMonitorApp::InitInstance()
             return FALSE;
         }
     }
+
+    // Remove the previous product name while preserving the migrated preference.
+    CRegKey run_key;
+    if (run_key.Open(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", KEY_SET_VALUE) == ERROR_SUCCESS)
+        run_key.DeleteValue(L"TrafficMonitor Four Readouts");
 
     // Start at sign-in by default; the compact settings dialog can disable it.
     if (m_auto_start_enabled)

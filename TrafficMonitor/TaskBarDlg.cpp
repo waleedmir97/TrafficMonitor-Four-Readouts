@@ -60,6 +60,8 @@ END_MESSAGE_MAP()
 void CTaskBarDlg::ShowInfo(CDC* pDC)
 {
     m_item_rects.clear();   //绘图前先清除所有项目的矩形区域
+    m_readout_snapshot = theApp.GetPerformanceSnapshot();
+    UpdateAccessibleWindowTitle();
     HWND current_hwnd = this->GetSafeHwnd();
     if (current_hwnd == NULL || !IsWindow(this->GetSafeHwnd()))
         return;
@@ -232,16 +234,16 @@ void CTaskBarDlg::ShowInfo(CDC* pDC)
                     else
                         DrawDisplayItem(draw, iter->ItemType(), item_rect, iter->item_width.label_width);
                 }
-                //要绘制的项目为奇数时绘制最后一个
+                // Keep an odd final item inline on the top row.
                 else if (item_count % 2 == 1 && index == item_count - 1)
                 {
-                    item_rect.MoveToXY(item_rect.right + DPI(theApp.m_taskbar_data.item_space), 0);
-                    item_rect.bottom = TASKBAR_WND_HEIGHT;
-                    item_rect.right = item_rect.left + iter->item_width.MaxWidth();
+                    item_rect.MoveToXY(item_rect.right + DPI(theApp.m_taskbar_data.item_space), -DPI(theApp.m_taskbar_data.vertical_margin));
+                    item_rect.bottom = m_window_height - TASKBAR_WND_HEIGHT / 2 - 1;
+                    item_rect.right = item_rect.left + iter->item_width.TotalWidth();
                     if (iter->IsPlugin())
-                        DrawPluginItem(draw, iter->PluginItem(), item_rect, iter->item_width.label_width, true);
+                        DrawPluginItem(draw, iter->PluginItem(), item_rect, iter->item_width.label_width);
                     else
-                        DrawDisplayItem(draw, iter->ItemType(), item_rect, iter->item_width.label_width, true);
+                        DrawDisplayItem(draw, iter->ItemType(), item_rect, iter->item_width.label_width);
                 }
             }
         }
@@ -309,13 +311,13 @@ void CTaskBarDlg::DrawDisplayItem(IDrawCommon& drawer, DisplayItem type, CRect r
         switch (type)
         {
         case TDI_CPU:
-            figure_value = theApp.m_cpu_usage;
+            figure_value = m_readout_snapshot.cpu_usage;
             break;
         case TDI_MEMORY:
-            figure_value = theApp.m_memory_usage;
+            figure_value = m_readout_snapshot.memory_usage;
             break;
         case TDI_GPU_USAGE:
-            figure_value = theApp.m_gpu_usage;
+            figure_value = m_readout_snapshot.gpu_usage;
             break;
         case TDI_CPU_TEMP:
             figure_value = theApp.m_cpu_temperature;
@@ -336,13 +338,13 @@ void CTaskBarDlg::DrawDisplayItem(IDrawCommon& drawer, DisplayItem type, CRect r
         //    figure_value = theApp.m_cpu_freq;
         //    break;
         case TDI_UP:
-            figure_value = CalculateNetspeedPercent(theApp.m_out_speed);
+            figure_value = CalculateNetspeedPercent(m_readout_snapshot.out_speed);
             break;
         case TDI_DOWN:
-            figure_value = CalculateNetspeedPercent(theApp.m_in_speed);
+            figure_value = CalculateNetspeedPercent(m_readout_snapshot.in_speed);
             break;
         case TDI_TOTAL_SPEED:
-            figure_value = CalculateNetspeedPercent(theApp.m_in_speed + theApp.m_out_speed);
+            figure_value = CalculateNetspeedPercent(m_readout_snapshot.in_speed + m_readout_snapshot.out_speed);
             break;
         default:
             break;
@@ -374,8 +376,64 @@ void CTaskBarDlg::DrawDisplayItem(IDrawCommon& drawer, DisplayItem type, CRect r
     IDrawCommon::Alignment value_alignment{ theApp.m_taskbar_data.value_right_align ? IDrawCommon::Alignment::RIGHT : IDrawCommon::Alignment::LEFT };      //数值的对齐方式
     if (vertical)
         value_alignment = IDrawCommon::Alignment::CENTER;
-    CString str_value = CommonDisplayItem(type).GetItemValueText(false);
+    CString str_value = GetSnapshotValueText(type);
     drawer.DrawWindowText(rect_value, str_value, text_color, value_alignment);
+}
+
+CString CTaskBarDlg::GetSnapshotValueText(DisplayItem type) const
+{
+    CString value;
+    switch (type)
+    {
+    case TDI_UP:
+    case TDI_DOWN:
+    case TDI_TOTAL_SPEED:
+    {
+        unsigned __int64 speed{};
+        if (type == TDI_UP)
+            speed = m_readout_snapshot.out_speed;
+        else if (type == TDI_DOWN)
+            speed = m_readout_snapshot.in_speed;
+        else
+            speed = m_readout_snapshot.in_speed + m_readout_snapshot.out_speed;
+        value = CCommon::DataSizeToString(speed, theApp.m_taskbar_data);
+        if (!theApp.m_taskbar_data.hide_unit || theApp.m_taskbar_data.speed_unit == SpeedUnit::AUTO)
+            value += _T("/s");
+        break;
+    }
+    case TDI_CPU:
+        value = CCommon::UsageToString(m_readout_snapshot.cpu_usage, theApp.m_taskbar_data);
+        break;
+    case TDI_MEMORY:
+        value = CCommon::UsageToString(m_readout_snapshot.memory_usage, theApp.m_taskbar_data);
+        break;
+    case TDI_GPU_USAGE:
+        value = CCommon::UsageToString(m_readout_snapshot.gpu_usage, theApp.m_taskbar_data);
+        break;
+    default:
+        value = CommonDisplayItem(type).GetItemValueText(false);
+        break;
+    }
+    return value;
+}
+
+void CTaskBarDlg::UpdateAccessibleWindowTitle()
+{
+    if (m_readout_snapshot.sequence == 0 || m_readout_snapshot.sequence == m_last_title_sequence)
+        return;
+
+    CString title;
+    title.Format(
+        _T("Performance Monitor|seq=%I64u|utc_ms=%I64u|up_Bps=%I64u|down_Bps=%I64u|cpu_pct=%d|ram_pct=%d|gpu_pct=%d"),
+        m_readout_snapshot.sequence,
+        m_readout_snapshot.sampled_at_ms,
+        m_readout_snapshot.out_speed,
+        m_readout_snapshot.in_speed,
+        m_readout_snapshot.cpu_usage,
+        m_readout_snapshot.memory_usage,
+        m_readout_snapshot.gpu_usage);
+    SetWindowText(title);
+    m_last_title_sequence = m_readout_snapshot.sequence;
 }
 
 void CTaskBarDlg::DrawPluginItem(IDrawCommon& drawer, IPluginItem* item, CRect rect, int label_width, bool vertical)
@@ -1014,7 +1072,7 @@ void CTaskBarDlg::CalculateWindowSize()
                 }
                 if (item_count % 2 == 1 && index == item_count - 1) //项目数为奇数时加上最后一个的宽度
                 {
-                    m_window_width += iter->item_width.MaxWidth();
+                    m_window_width += iter->item_width.TotalWidth();
                 }
 
                 index++;
@@ -1395,7 +1453,7 @@ void CTaskBarDlg::OnPaint()
 
 void CTaskBarDlg::AddHisToList(CommonDisplayItem item_type, int current_usage_percent)
 {
-    // The fixed four-readout profile never retains graph or history samples.
+    // The fixed five-readout profile never retains graph or history samples.
     (void)item_type;
     (void)current_usage_percent;
 }

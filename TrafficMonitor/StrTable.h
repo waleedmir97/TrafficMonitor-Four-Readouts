@@ -34,6 +34,7 @@ public:
     const wstring& LoadMenuText(const wstring& key) const;
 
     const wstring& LoadText(const wstring& key, const wstring& section);
+    void SetText(const wstring& key, const wstring& value);
 
     // 获取默认字体名称
     const LanguageInfo& GetLanguageInfo() const { return m_language_info; }
@@ -58,4 +59,3 @@ private:
     LanguageInfo m_language_info;                   //当前语言
     std::vector<LanguageInfo> m_language_list;      //所有支持的语言
 };
-

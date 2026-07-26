@@ -3,6 +3,32 @@
 The hashes below were calculated from the preserved local artifacts before
 publication.
 
+## v1.4.0 - Performance Monitor and live metric fidelity
+
+Built 2026-07-26 from the source currently in this repository.
+
+Asset:
+`PerformanceMonitor_v1.4.0_x64.zip`
+
+```text
+ZIP SHA-256: 8C43585ADDD3AACF1CC9A2229CE7C36C73110998A335A5B7243C8875189A842A
+EXE SHA-256: BD653D5F5653D18F019B26B6E53B03E0932B8290DACAB83E959766D06EAEAD3C
+```
+
+Changes:
+
+- Renames the product and executable to Performance Monitor.
+- Adds RAM to the taskbar for a fixed five-readout layout.
+- Publishes CPU, RAM, GPU, upload, and download from one coherent snapshot.
+- Uses total processor busy time, physical-memory load, grouped physical GPU
+  engines, and 64-bit counters from the active default-route interface.
+- Replaces short-interval polling with event-driven one-second sampling and
+  skips unused hardware, frequency, disk, and plugin polling in the lite build.
+- Migrates the automatic-start preference to the Performance Monitor registry
+  key and removes the legacy key after a successful migration.
+- Preserves Weather anchoring, full-screen coverage, taskbar recovery, and the
+  no-history runtime.
+
 ## v1.3.0 - Taskbar lifecycle fixes
 
 Built 2026-07-25 from the source currently in this repository.

@@ -22,17 +22,18 @@ bool CPdhGPUUsage::GetGpuUsage(int& usage)
         {
             if (!valueItems.empty())
             {
-                //获取所有类型的利用率
+                // Aggregate process instances that belong to the same physical
+                // GPU engine, then report the busiest engine as Task Manager does.
                 std::map<std::wstring, double> gpu_usage_map;
                 for (const auto& item : valueItems)
                 {
                     std::wstring item_name = item.name;
-                    size_t index = item.name.rfind(L'_');
+                    size_t index = item.name.find(L"luid_");
                     if (index != std::wstring::npos)
-                        item_name = item.name.substr(index + 1);
+                        item_name = item.name.substr(index);
                     gpu_usage_map[item_name] += item.value;
                 }
-                //查找所有类型中最大的值作为总利用率（同Windows任务管理器的处理）
+                //查找所有引擎中最大的值作为总利用率（同Windows任务管理器的处理）
                 double max_value = 0;
                 for (const auto& item : gpu_usage_map)
                 {

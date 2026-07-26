@@ -93,10 +93,10 @@ using std::ofstream;
 #define MAX_INSERT_TO_TASKBAR_CNT 200     //尝试嵌入任务栏的最大次数
 #define WARN_INSERT_TO_TASKBAR_CNT 20     //尝试嵌入任务栏的警告次数
 
-#define APP_NAME _T("TrafficMonitor Four Readouts")
-#define TASKBAR_WINDOW_NAME _T("TrafficMonitorFourReadoutsWindow")
+#define APP_NAME _T("Performance Monitor")
+#define TASKBAR_WINDOW_NAME _T("PerformanceMonitorTaskbarWindow")
 #define APP_CLASS_NAME _T("TrafficMonitor_r7XZaS4p") //程序主窗口的类名
-#define VERSION L"1.86"
+#define VERSION L"1.4.0"
 #define COPYRITE_YEAR L"2017-2026"
 
 #define MAX_NOTIFY_ICON 6       //可选的通知区图标数量

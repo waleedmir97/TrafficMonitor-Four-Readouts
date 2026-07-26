@@ -136,6 +136,11 @@ const wstring& CStrTable::LoadText(const wstring& key, const wstring& section)
     return str_empty;
 }
 
+void CStrTable::SetText(const wstring& key, const wstring& value)
+{
+    m_string_table[L"text"][key] = value;
+}
+
 void CStrTable::ReadStringtableFronIni(const CIniHelper& ini)
 {
     std::set<std::wstring> sections{ L"general", L"text", L"menu" };

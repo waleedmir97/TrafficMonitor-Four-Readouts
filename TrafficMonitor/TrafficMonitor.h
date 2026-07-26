@@ -23,6 +23,19 @@
 #include "PluginUpdateHelper.h"
 #include "PluginInterface.h"
 
+struct PerformanceSnapshot
+{
+    unsigned __int64 sequence{};
+    unsigned __int64 sampled_at_ms{};
+    unsigned __int64 in_speed{};
+    unsigned __int64 out_speed{};
+    int cpu_usage{ -1 };
+    int memory_usage{ -1 };
+    int used_memory{};
+    int total_memory{};
+    int gpu_usage{ -1 };
+};
+
 // CTrafficMonitorApp:
 // 有关此类的实现，请参阅 TrafficMonitor.cpp
 //
@@ -34,6 +47,8 @@ public:
     void EnforceTaskbarOnlyMode();
     bool IsAutoStartEnabled() const { return m_auto_start_enabled; }
     bool SetAutoStartEnabled(bool enabled);
+    void PublishPerformanceSnapshot();
+    PerformanceSnapshot GetPerformanceSnapshot() const;
 
     //各种路径
     static CTrafficMonitorApp* self;
@@ -177,6 +192,8 @@ public:
 
 private:
     bool m_auto_start_enabled{ true };
+    mutable CCriticalSection m_performance_snapshot_critical;
+    PerformanceSnapshot m_performance_snapshot;
     //int m_no_multistart_warning_time{};       //用于设置在开机后多长时间内不弹出“已经有一个程序正在运行”的警告提示
     bool m_no_multistart_warning{};         //如果为false，则永远都不会弹出“已经有一个程序正在运行”的警告提示
     bool m_exit_when_start_by_restart_manager{ true };      //如果程序被Windows重启管理器重新启动，则退出程序

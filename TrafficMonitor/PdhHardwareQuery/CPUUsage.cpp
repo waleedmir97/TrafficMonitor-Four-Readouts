@@ -9,7 +9,7 @@
 ///////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////
 CPdhCPUUsage::CPdhCPUUsage()
-    : CPdhQuery(theApp.m_win_version.GetMajorVersion() >= 10 ? _T("\\Processor Information(_Total)\\% Processor Utility") : _T("\\Processor Information(_Total)\\% Processor Time"))
+    : CPdhQuery(_T("\\Processor Information(_Total)\\% Processor Time"))
 {
 }
 
@@ -18,7 +18,7 @@ bool CPdhCPUUsage::GetCPUUsage(int& cpu_usage)
     double value{};
     if (QueryValue(value))
     {
-        cpu_usage = static_cast<int>(value);
+        cpu_usage = static_cast<int>(value + 0.5);
         if (cpu_usage > 100)
             cpu_usage = 100;
         return true;

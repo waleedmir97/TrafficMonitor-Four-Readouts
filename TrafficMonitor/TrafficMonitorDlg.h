@@ -5,6 +5,7 @@
 #pragma once
 #pragma comment (lib, "iphlpapi.lib")
 
+#include <iphlpapi.h>
 #include "NetworkInfoDlg.h"
 #include "afxwin.h"
 #include "StaticEx.h"
@@ -63,6 +64,7 @@ protected:
     unsigned __int64 m_out_bytes{};   //当前已发送的字节数
     unsigned __int64 m_last_in_bytes{}; //上次已接收的字节数
     unsigned __int64 m_last_out_bytes{};    //上次已发送的字节数
+    NET_IFINDEX m_primary_interface_index{};
 
     CCPUUsage m_cpu_usage_helper;
     CPdhCpuFreq m_cpu_freq_helper;
@@ -127,8 +129,9 @@ protected:
     string m_connection_name_preferd{ theApp.m_cfg_data.m_connection_name };          //保存用户手动选择的网络连接名称
 
     void DoMonitorAcquisition();    //获取一次监控信息
+    bool GetPrimaryNetworkCounters(unsigned __int64& in_bytes, unsigned __int64& out_bytes, NET_IFINDEX& interface_index);
     static UINT MonitorThreadCallback(LPVOID dwUser);   //获取监控信息的线程函数
-    bool m_monitor_data_required{ false };          //线程中需要获取监控数据标志，当需要获取监控数据时置为true，获取到一次监控数据时置为false
+    CEvent m_monitorRequestEvent;    //定时器触发时唤醒监控线程
     bool m_is_thread_exit{ false }; //线程退出标志
     CEvent m_threadExitEvent;       //用于通知主线程工作线程已退出
 public:
