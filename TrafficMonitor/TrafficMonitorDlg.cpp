@@ -95,7 +95,6 @@ BEGIN_MESSAGE_MAP(CTrafficMonitorDlg, CDialog)
     ON_COMMAND(ID_SHOW_MAIN_WND, &CTrafficMonitorDlg::OnShowMainWnd)
     ON_COMMAND(ID_CHANGE_SKIN, &CTrafficMonitorDlg::OnChangeSkin)
     ON_REGISTERED_MESSAGE(m_WM_TASKBARCREATED, &CTrafficMonitorDlg::OnTaskBarCreated)
-    ON_COMMAND(ID_TRAFFIC_HISTORY, &CTrafficMonitorDlg::OnTrafficHistory)
     ON_WM_MOUSEMOVE()
     ON_WM_LBUTTONDBLCLK()
     ON_COMMAND(ID_OPTIONS, &CTrafficMonitorDlg::OnOptions)
@@ -360,9 +359,16 @@ void CTrafficMonitorDlg::GetScreenSize()
 
 void CTrafficMonitorDlg::AutoSelect()
 {
+    if (m_connections.empty())
+    {
+        m_connection_selected = -1;
+        theApp.m_cfg_data.m_connection_name.clear();
+        m_connection_change_flag = true;
+        return;
+    }
+
     unsigned __int64 max_in_out_bytes{};
     unsigned __int64 in_out_bytes;
-    //m_connection_selected = m_connections[0].index;
     m_connection_selected = 0;
     //自动选择连接时，查找已发送和已接收字节数之和最多的那个连接，并将其设置为当前查看的连接
     for (size_t i{}; i < m_connections.size(); i++)
@@ -470,15 +476,19 @@ void CTrafficMonitorDlg::IniConnection()
                 m_connection_selected = i;
         }
     }
-    if (m_connection_selected < 0 || m_connection_selected >= m_connections.size())
-        m_connection_selected = 0;
-    theApp.m_cfg_data.m_connection_name = GetConnection(m_connection_selected).description_2;
+    if (m_connections.empty())
+    {
+        m_connection_selected = -1;
+        theApp.m_cfg_data.m_connection_name.clear();
+    }
+    else
+    {
+        if (m_connection_selected < 0 || m_connection_selected >= static_cast<int>(m_connections.size()))
+            m_connection_selected = 0;
+        theApp.m_cfg_data.m_connection_name = GetConnection(m_connection_selected).description_2;
+    }
 
-    //根据已获取到的连接在菜单中添加相应项目
-    IniConnectionMenu(theApp.m_main_menu.GetSubMenu(0)->GetSubMenu(0));      //向“选择网络连接”子菜单项添加项目
-    IniConnectionMenu(theApp.m_main_menu_plugin.GetSubMenu(0)->GetSubMenu(0));      //向“选择网络连接”子菜单项添加项目
-
-    IniTaskBarConnectionMenu();     //初始化任务栏窗口中的“选择网络连接”子菜单项
+    // The fixed profile has no connection-selection menus to initialize.
 
     m_restart_cnt++;    //记录初始化次数
     m_connection_change_flag = true;
@@ -598,48 +608,16 @@ void CTrafficMonitorDlg::OpenTaskBarWnd()
 
 void CTrafficMonitorDlg::AddNotifyIcon()
 {
-    if (theApp.m_cfg_data.m_show_task_bar_wnd)
-        CloseTaskBarWnd();
-    //添加通知栏图标
-    ::Shell_NotifyIcon(NIM_ADD, &m_ntIcon);
-    if (theApp.m_cfg_data.m_show_task_bar_wnd)
-        OpenTaskBarWnd();
+    theApp.EnforceTaskbarOnlyMode();
 }
 
 void CTrafficMonitorDlg::DeleteNotifyIcon()
 {
-    if (theApp.m_cfg_data.m_show_task_bar_wnd)
-        CloseTaskBarWnd();
-    //删除通知栏图标
     ::Shell_NotifyIcon(NIM_DELETE, &m_ntIcon);
-    if (theApp.m_cfg_data.m_show_task_bar_wnd)
-        OpenTaskBarWnd();
 }
 
-void CTrafficMonitorDlg::ShowNotifyTip(const wchar_t* title, const wchar_t* message)
+void CTrafficMonitorDlg::ShowNotifyTip(const wchar_t*, const wchar_t*)
 {
-    //要显示通知区提示，必须先将通知区图标显示出来
-    if (!theApp.m_general_data.show_notify_icon)
-    {
-        //添加通知栏图标
-        AddNotifyIcon();
-    }
-    //显示通知提示
-    m_ntIcon.uFlags |= NIF_INFO;
-    //wcscpy_s(m_ntIcon.szInfo, message ? message : _T(""));
-    //wcscpy_s(m_ntIcon.szInfoTitle, title ? title : _T(""));
-    CCommon::WStringCopy(m_ntIcon.szInfo, 256, message);
-    CCommon::WStringCopy(m_ntIcon.szInfoTitle, 64, title);
-    ::Shell_NotifyIcon(NIM_MODIFY, &m_ntIcon);
-    m_ntIcon.uFlags &= ~NIF_INFO;
-
-    //如果不显示通知区域图标，则在弹出通知的一段时间后删除通知区图标
-    if (!theApp.m_general_data.show_notify_icon)
-    {
-        //延迟一定时间后删除通知区图标
-        KillTimer(DELETE_NOTIFY_ICON_TIMER);
-        SetTimer(DELETE_NOTIFY_ICON_TIMER, 8000, NULL);
-    }
 }
 
 void CTrafficMonitorDlg::UpdateNotifyIconTip()
@@ -679,194 +657,23 @@ void CTrafficMonitorDlg::UpdateNotifyIconTip()
 
 }
 
-void CTrafficMonitorDlg::SaveHistoryTraffic()
+void CTrafficMonitorDlg::_OnOptions(int, CWnd* pParent)
 {
-    m_history_traffic.Save();
-}
+    if (COptionsDlg::GetUniqueHandel(OPTION_DLG_NAME) != NULL)
+        return;
 
-void CTrafficMonitorDlg::LoadHistoryTraffic()
-{
-    m_history_traffic.Load();
-    CHistoryTrafficFile backup_file(theApp.m_history_traffic_path + L".bak");
-    backup_file.LoadSize();     //读取备份文件中流量记录的数量
-    if (backup_file.Size() > m_history_traffic.Size())      //如果备份文件中流量记录的数量大于当前的数量，则从备份文件中恢复
-    {
-        backup_file.Load();
-        size_t size_before = m_history_traffic.Size();
-        m_history_traffic.Merge(backup_file, true);
-        CString log_info = CCommon::LoadTextFormat(IDS_HISTORY_TRAFFIC_LOST_ERROR_LOG, { size_before, backup_file.Size() });
-        CCommon::WriteLog(log_info, theApp.m_log_path.c_str());
-    }
-
-    theApp.m_today_up_traffic = m_history_traffic.GetTodayUpTraffic();
-    theApp.m_today_down_traffic = m_history_traffic.GetTodayDownTraffic();
-}
-
-void CTrafficMonitorDlg::BackupHistoryTrafficFile()
-{
-    CHistoryTrafficFile backup_file(theApp.m_history_traffic_path + L".bak");
-    CHistoryTrafficFile latest_file(theApp.m_history_traffic_path);
-    backup_file.LoadSize();
-    latest_file.LoadSize();
-    if (backup_file.Size() < latest_file.Size())
-    {
-        CopyFile(latest_file.GetFilePath().c_str(), backup_file.GetFilePath().c_str(), FALSE);
-    }
-}
-
-void CTrafficMonitorDlg::_OnOptions(int tab, CWnd* pParent)
-{
-    COptionsDlg optionsDlg(tab, pParent);
-
-    //将选项设置数据传递给选项设置对话框
-    if (COptionsDlg::GetUniqueHandel(OPTION_DLG_NAME) == NULL)     //确保此时选项设置对话框已经关闭
-    {
-        optionsDlg.m_tab1_dlg.m_data = theApp.m_main_wnd_data;
-        optionsDlg.m_tab2_dlg.m_data = theApp.m_taskbar_data;
-        optionsDlg.m_tab3_dlg.m_data = theApp.m_general_data;
-        optionsDlg.m_tab1_dlg.m_text_disable = m_skin.GetLayoutInfo().no_label;
-    }
-
+    COptionsDlg optionsDlg(0, pParent);
     if (optionsDlg.DoModal() == IDOK)
-    {
         ApplySettings(optionsDlg);
-    }
 }
 
-void CTrafficMonitorDlg::ApplySettings(COptionsDlg& optionsDlg)
+void CTrafficMonitorDlg::ApplySettings(COptionsDlg&)
 {
-    bool is_hardware_monitor_item_changed = (optionsDlg.m_tab3_dlg.m_data.hardware_monitor_item != theApp.m_general_data.hardware_monitor_item);
-    bool is_always_on_top_changed = (optionsDlg.m_tab1_dlg.m_data.m_always_on_top != theApp.m_main_wnd_data.m_always_on_top);
-    bool is_mouse_penerate_changed = (optionsDlg.m_tab1_dlg.m_data.m_mouse_penetrate != theApp.m_main_wnd_data.m_mouse_penetrate);
-    bool is_alow_out_of_border_changed = (optionsDlg.m_tab1_dlg.m_data.m_alow_out_of_border != theApp.m_main_wnd_data.m_alow_out_of_border);
-    bool is_show_notify_icon_changed = (optionsDlg.m_tab3_dlg.m_data.show_notify_icon != theApp.m_general_data.show_notify_icon);
-    bool is_connections_hide_changed = (optionsDlg.m_tab3_dlg.m_data.connections_hide.data() != theApp.m_general_data.connections_hide.data());
-    bool d2d_turned_on = (theApp.m_taskbar_data.disable_d2d && !optionsDlg.m_tab2_dlg.m_data.disable_d2d);
-    //需要重新关闭再打开任务栏窗口的情况
-    bool taskbar_changed = (theApp.m_taskbar_data.show_taskbar_wnd_in_secondary_display != optionsDlg.m_tab2_dlg.m_data.show_taskbar_wnd_in_secondary_display
-        || theApp.m_taskbar_data.secondary_display_index != optionsDlg.m_tab2_dlg.m_data.secondary_display_index
-        || theApp.m_taskbar_data.disable_d2d != optionsDlg.m_tab2_dlg.m_data.disable_d2d
-        || theApp.m_taskbar_data.IsTaskbarTransparent() != optionsDlg.m_tab2_dlg.m_data.IsTaskbarTransparent()
-        || theApp.m_taskbar_data.auto_set_background_color != optionsDlg.m_tab2_dlg.m_data.auto_set_background_color
-        );
-    bool is_skin_data_changed = (theApp.m_main_wnd_data.ToSkinSettingData() != optionsDlg.m_tab1_dlg.m_data.ToSkinSettingData());
-
-    theApp.m_main_wnd_data = optionsDlg.m_tab1_dlg.m_data;
-    theApp.m_taskbar_data = optionsDlg.m_tab2_dlg.m_data;
-    theApp.m_general_data = optionsDlg.m_tab3_dlg.m_data;
-    theApp.SendSettingsToPlugin();
-
-    CGeneralSettingsDlg::CheckTaskbarDisplayItem();
-
-    SetTextFont();
-
-    //打开了D2D渲染后自动开启“背景透明”并关闭“根据任务栏颜色自动设置背景色”
-    if (d2d_turned_on)
-    {
-        theApp.m_taskbar_data.SetTaskabrTransparent(true);
-        theApp.m_taskbar_data.auto_set_background_color = false;
-    }
-
-    //CTaskBarDlg::SaveConfig();
-    if (IsTaskbarWndValid())
-    {
-        m_tBarDlg->ApplySettings();
-        //如果更改了任务栏窗口字体或显示的文本，则任务栏窗口可能要变化，于是关闭再打开任务栏窗口
-        if (taskbar_changed)
-        {
-            CloseTaskBarWnd();
-            OpenTaskBarWnd();
-        }
-        else
-        {
-            m_tBarDlg->WidthChanged();
-        }
-        m_tBarDlg->ApplyWindowTransparentColor();
-    }
-
-    if (optionsDlg.m_tab3_dlg.IsAutoRunModified())
-    {
-        if (!theApp.SetAutoRun(theApp.m_general_data.auto_run))
-            MessageBox(CCommon::LoadText(IDS_SET_AUTO_RUN_FAILED_WARNING), NULL, MB_ICONWARNING | MB_OK);
-    }
-
-    if (optionsDlg.m_tab3_dlg.IsShowAllInterfaceModified() || is_connections_hide_changed)
-        IniConnection();
-
-    if (optionsDlg.m_tab3_dlg.IsMonitorTimeSpanModified())      //如果监控时间间隔改变了，则重设定时器
-    {
-        KillTimer(MONITOR_TIMER);
-        SetTimer(MONITOR_TIMER, theApp.m_general_data.monitor_time_span, NULL);
-    }
-
-    //设置获取CPU利用率的方式
-    m_cpu_usage_helper.SetUseCPUTimes(theApp.m_general_data.cpu_usage_acquire_method != GeneralSettingData::CA_PDH);
-
-#ifndef WITHOUT_TEMPERATURE
-    if (is_hardware_monitor_item_changed)
-    {
-        //如果关闭了硬件监控，则析构硬件监控类
-        if (theApp.m_general_data.hardware_monitor_item == 0)
-        {
-            CSingleLock sync(&theApp.m_minitor_lib_critical, TRUE);
-            theApp.m_pMonitor.reset();
-        }
-        else if (theApp.m_pMonitor != nullptr)
-        {
-            theApp.UpdateOpenHardwareMonitorEnableState();
-        }
-        else if (IsTemperatureNeeded())
-        {
-            theApp.InitOpenHardwareLibInThread();
-        }
-        //更新任务栏窗口右键菜单
-        //theApp.UpdateTaskbarWndMenu();
-    }
-#endif
-
-    if (is_always_on_top_changed)
-    {
-        SetAlwaysOnTop();
-    }
-
-    if (is_mouse_penerate_changed)
-    {
-        SetMousePenetrate();
-        if (!theApp.m_general_data.show_notify_icon && theApp.IsForceShowNotifyIcon())   //鼠标穿透时，如果通知图标没有显示，则将它显示出来，否则无法呼出右键菜单
-        {
-            //添加通知栏图标
-            AddNotifyIcon();
-            theApp.m_general_data.show_notify_icon = true;
-        }
-    }
-
-    if (is_alow_out_of_border_changed)
-    {
-        CheckWindowPos();
-    }
-
-    if (is_show_notify_icon_changed)
-    {
-        if (theApp.IsForceShowNotifyIcon())
-            theApp.m_general_data.show_notify_icon = true;
-        if (theApp.m_general_data.show_notify_icon)
-            AddNotifyIcon();
-        else
-            DeleteNotifyIcon();
-    }
-
-    if (is_skin_data_changed)
-    {
-        //将当前皮肤设置保存到SkinManager
-        SkinSettingData skin_data = theApp.m_main_wnd_data.ToSkinSettingData();
-        CSkinManager::Instance().AddSkinSettingData(theApp.m_cfg_data.m_skin_name, skin_data);
-        CSkinManager::Instance().Save();
-    }
-
-    theApp.SaveConfig();
-    theApp.SaveGlobalConfig();
+    theApp.EnforceTaskbarOnlyMode();
+    ShowWindow(SW_HIDE);
+    CloseTaskBarWnd();
+    OpenTaskBarWnd();
 }
-
 void CTrafficMonitorDlg::SetItemPosition()
 {
     if (theApp.m_cfg_data.m_show_more_info)
@@ -1055,9 +862,7 @@ BOOL CTrafficMonitorDlg::OnInitDialog()
     m_last_screen_rects = m_screen_rects;
     //::SystemParametersInfo(SPI_GETWORKAREA, 0, &m_screen_rect, 0);   // 获得工作区大小
 
-    //初始化菜单
-    theApp.InitMenuResourse();
-    //theApp.UpdateTaskbarWndMenu();
+    // This fixed build has no menus or settings surface.
 
     //初始化皮肤
     CSkinManager::Instance().Init();
@@ -1108,9 +913,6 @@ BOOL CTrafficMonitorDlg::OnInitDialog()
     m_ntIcon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; //图标的属性：设置成员uCallbackMessage、hIcon、szTip有效
     if (theApp.m_general_data.show_notify_icon)
         ::Shell_NotifyIcon(NIM_ADD, &m_ntIcon); //在系统通知区域增加这个图标
-
-    //载入流量历史记录
-    LoadHistoryTraffic();
 
     //设置1000毫秒触发的定时器
     SetTimer(MAIN_TIMER, 1000, NULL);
@@ -1262,37 +1064,6 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
         {
             AutoSelect();
             m_zero_speed_cnt = 0;
-        }
-    }
-
-    //检测当前日期是否改变，如果已改变，就向历史流量列表插入一个新的日期
-    SYSTEMTIME current_time;
-    GetLocalTime(&current_time);
-    if (m_history_traffic.GetTraffics()[0].day != current_time.wDay)
-    {
-        HistoryTraffic traffic;
-        traffic.year = current_time.wYear;
-        traffic.month = current_time.wMonth;
-        traffic.day = current_time.wDay;
-        traffic.mixed = false;
-        m_history_traffic.GetTraffics().push_front(traffic);
-        theApp.m_today_up_traffic = 0;
-        theApp.m_today_down_traffic = 0;
-    }
-
-    //统计今天已使用的流量
-    theApp.m_today_up_traffic += cur_out_speed;
-    theApp.m_today_down_traffic += cur_in_speed;
-    m_history_traffic.GetTraffics()[0].up_kBytes = theApp.m_today_up_traffic / 1024u;
-    m_history_traffic.GetTraffics()[0].down_kBytes = theApp.m_today_down_traffic / 1024u;
-    //每隔30秒保存一次流量历史记录
-    if (m_monitor_time_cnt % GetMonitorTimerCount(30) == GetMonitorTimerCount(30) - 1)
-    {
-        static unsigned __int64 last_today_kbytes;
-        if (m_history_traffic.GetTraffics()[0].kBytes() - last_today_kbytes >= 100u) //只有当流量变化超过100KB时才保存历史流量记录，防止磁盘写入过于频繁
-        {
-            SaveHistoryTraffic();
-            last_today_kbytes = m_history_traffic.GetTraffics()[0].kBytes();
         }
     }
 
@@ -1807,6 +1578,8 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
         {
             theApp.m_last_light_mode = light_mode;
             bool restart_taskbar_dlg{ false };
+            theApp.EnforceTaskbarOnlyMode();
+            restart_taskbar_dlg = true;
             if (theApp.m_taskbar_data.auto_adapt_light_theme)
             {
                 int style_index = CWindowsSettingHelper::IsWindows10LightTheme() ? theApp.m_taskbar_data.light_default_style : theApp.m_taskbar_data.dark_default_style;
@@ -1823,8 +1596,10 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
             if (restart_taskbar_dlg && IsTaskbarWndValid())
             {
                 m_tBarDlg->ApplyWindowTransparentColor();
-                //CloseTaskBarWnd();
-                //OpenTaskBarWnd();
+                m_tBarDlg->SetTextFont();
+                m_tBarDlg->CalculateWindowSize();
+                m_tBarDlg->WidthChanged();
+                m_tBarDlg->Invalidate(FALSE);
 
                 //写入调试日志
                 if (theApp.m_debug_log)
@@ -2016,9 +1791,6 @@ void CTrafficMonitorDlg::OnRButtonUp(UINT nFlags, CPoint point)
     case DoubleClickAction::CONNECTION_INFO:
         pContextMenu->SetDefaultItem(ID_NETWORK_INFO);
         break;
-        //case DoubleClickAction::HISTORY_TRAFFIC:
-        //  pContextMenu->SetDefaultItem(ID_TRAFFIC_HISTORY);
-        //  break;
     case DoubleClickAction::SHOW_MORE_INFO:
         pContextMenu->SetDefaultItem(ID_SHOW_CPU_MEMORY);
         break;
@@ -2147,8 +1919,6 @@ void CTrafficMonitorDlg::OnClose()
     theApp.m_cannot_save_global_config_warning = true;
     theApp.SaveConfig();    //退出前保存设置到ini文件
     theApp.SaveGlobalConfig();
-    SaveHistoryTraffic();
-    BackupHistoryTrafficFile();
 
     if (IsTaskbarWndValid())
         m_tBarDlg->OnCancel();
@@ -2406,17 +2176,8 @@ afx_msg LRESULT CTrafficMonitorDlg::OnNotifyIcon(WPARAM wParam, LPARAM lParam)
 
 void CTrafficMonitorDlg::OnShowNotifyIcon()
 {
-    // TODO: 在此添加命令处理程序代码
-    if (theApp.m_general_data.show_notify_icon)
-    {
-        DeleteNotifyIcon();
-        theApp.m_general_data.show_notify_icon = false;
-    }
-    else
-    {
-        AddNotifyIcon();
-        theApp.m_general_data.show_notify_icon = true;
-    }
+    theApp.EnforceTaskbarOnlyMode();
+    DeleteNotifyIcon();
     theApp.SaveConfig();
 }
 
@@ -2513,27 +2274,9 @@ void CTrafficMonitorDlg::OnMousePenetrate()
 
 void CTrafficMonitorDlg::OnShowTaskBarWnd()
 {
-    // TODO: 在此添加命令处理程序代码
-    if (m_tBarDlg != nullptr)
-    {
-        CloseTaskBarWnd();
-    }
-    if (!theApp.m_cfg_data.m_show_task_bar_wnd)
-    {
-        theApp.m_cfg_data.m_show_task_bar_wnd = true;
-        OpenTaskBarWnd();
-    }
-    else
-    {
-        theApp.m_cfg_data.m_show_task_bar_wnd = false;
-        //关闭任务栏窗口后，如果没有显示通知区图标，且没有显示主窗口或设置了鼠标穿透，则将通知区图标显示出来
-        if (!theApp.m_general_data.show_notify_icon && theApp.IsForceShowNotifyIcon())
-        {
-            AddNotifyIcon();
-            theApp.m_general_data.show_notify_icon = true;
-        }
-    }
-    theApp.SaveConfig();
+    theApp.EnforceTaskbarOnlyMode();
+    CloseTaskBarWnd();
+    OpenTaskBarWnd();
 }
 
 
@@ -2549,44 +2292,17 @@ void CTrafficMonitorDlg::OnAppAbout()
 //当资源管理器重启时会触发此消息
 LRESULT CTrafficMonitorDlg::OnTaskBarCreated(WPARAM wParam, LPARAM lParam)
 {
-    if (m_tBarDlg != nullptr)
-    {
-        CloseTaskBarWnd();
-        if (theApp.m_general_data.show_notify_icon)
-        {
-            //重新添加通知栏图标
-            ::Shell_NotifyIcon(NIM_ADD, &m_ntIcon);
-        }
-        OpenTaskBarWnd();
-    }
-    else
-    {
-        if (theApp.m_general_data.show_notify_icon)
-            ::Shell_NotifyIcon(NIM_ADD, &m_ntIcon);
-    }
+    theApp.EnforceTaskbarOnlyMode();
+    CloseTaskBarWnd();
+    OpenTaskBarWnd();
     return LRESULT();
 }
 
 
 void CTrafficMonitorDlg::OnShowMainWnd()
 {
-    // TODO: 在此添加命令处理程序代码
-    if (!theApp.m_cfg_data.m_hide_main_window)
-    {
-        ShowWindow(SW_HIDE);
-        theApp.m_cfg_data.m_hide_main_window = true;
-        //隐藏主窗口后，如果没有显示通知栏图标，则将其显示出来
-        if (!theApp.m_general_data.show_notify_icon && theApp.IsForceShowNotifyIcon())
-        {
-            AddNotifyIcon();
-            theApp.m_general_data.show_notify_icon = true;
-        }
-    }
-    else
-    {
-        ShowWindow(SW_RESTORE);
-        theApp.m_cfg_data.m_hide_main_window = false;
-    }
+    theApp.EnforceTaskbarOnlyMode();
+    ShowWindow(SW_HIDE);
     theApp.SaveConfig();
 }
 
@@ -2603,14 +2319,6 @@ void CTrafficMonitorDlg::OnChangeSkin()
     }
 }
 
-
-
-void CTrafficMonitorDlg::OnTrafficHistory()
-{
-    // TODO: 在此添加命令处理程序代码
-    CHistoryTrafficDlg historyDlg(m_history_traffic.GetTraffics());
-    historyDlg.DoModal();
-}
 
 
 void CTrafficMonitorDlg::OnMouseMove(UINT nFlags, CPoint point)
@@ -2639,9 +2347,6 @@ void CTrafficMonitorDlg::OnLButtonDblClk(UINT nFlags, CPoint point)
     {
     case DoubleClickAction::CONNECTION_INFO:
         OnNetworkInfo();            //双击后弹出“连接详情”对话框
-        break;
-    case DoubleClickAction::HISTORY_TRAFFIC:
-        OnTrafficHistory();         //双击后弹出“历史流量统计”对话框
         break;
     case DoubleClickAction::SHOW_MORE_INFO:
         OnShowCpuMemory();          //切换显示CPU和内存利用率
@@ -2766,8 +2471,6 @@ BOOL CTrafficMonitorDlg::OnQueryEndSession()
     // TODO:  在此添加专用的查询结束会话代码
     theApp.SaveConfig();
     theApp.SaveGlobalConfig();
-    SaveHistoryTraffic();
-    BackupHistoryTrafficFile();
 
     if (theApp.m_debug_log)
     {
@@ -2828,15 +2531,11 @@ afx_msg LRESULT CTrafficMonitorDlg::OnDpichanged(WPARAM wParam, LPARAM lParam)
 }
 
 
-afx_msg LRESULT CTrafficMonitorDlg::OnTaskbarWndClosed(WPARAM wParam, LPARAM lParam)
+afx_msg LRESULT CTrafficMonitorDlg::OnTaskbarWndClosed(WPARAM, LPARAM)
 {
-    theApp.m_cfg_data.m_show_task_bar_wnd = false;
-    //关闭任务栏窗口后，如果没有显示通知区图标，且没有显示主窗口或设置了鼠标穿透，则将通知区图标显示出来
-    if (!theApp.m_general_data.show_notify_icon && theApp.IsForceShowNotifyIcon())
-    {
-        AddNotifyIcon();
-        theApp.m_general_data.show_notify_icon = true;
-    }
+    theApp.EnforceTaskbarOnlyMode();
+    PostMessage(WM_REOPEN_TASKBAR_WND);
+    theApp.SaveConfig();
     return 0;
 }
 
@@ -2884,8 +2583,9 @@ void CTrafficMonitorDlg::OnPluginManage()
     dlg.DoModal();
 }
 
-LRESULT CTrafficMonitorDlg::OnReopenTaksbarWnd(WPARAM wParam, LPARAM lParam)
+LRESULT CTrafficMonitorDlg::OnReopenTaksbarWnd(WPARAM, LPARAM)
 {
+    theApp.EnforceTaskbarOnlyMode();
     CloseTaskBarWnd();
     OpenTaskBarWnd();
     return 0;

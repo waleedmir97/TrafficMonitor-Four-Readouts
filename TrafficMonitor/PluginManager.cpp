@@ -15,6 +15,9 @@
 
 CPluginManager::CPluginManager()
 {
+    // Built-in display items are available even when optional plugins are not loaded.
+    for (const auto& display_item : AllDisplayItems)
+        m_all_display_items_with_plugins.insert(display_item);
 }
 
 CPluginManager::~CPluginManager()
@@ -123,11 +126,7 @@ void CPluginManager::LoadPlugins()
     // hook MFC导入的User32.dll下的DrawText系列函数
     ReplaceMfcDrawTextFunction();
 
-    //初始化所有任务栏显示项目
-    for (const auto& display_item : AllDisplayItems)
-    {
-        m_all_display_items_with_plugins.insert(display_item);
-    }
+    // Add only the optional plugin items; built-in items are registered by the constructor.
     for (const auto& display_item : m_plugins)
     {
         m_all_display_items_with_plugins.insert(display_item);

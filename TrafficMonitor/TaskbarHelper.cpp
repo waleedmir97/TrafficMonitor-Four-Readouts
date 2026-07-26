@@ -50,33 +50,35 @@ static BOOL CALLBACK EnumWindowsProc(HWND hwnd, LPARAM lParam)
     return TRUE;
 }
 
-// 比较函数：按显示器的左上角坐标排序
+static bool GetMonitorRectForTaskbar(HWND hwnd, CRect& rect)
+{
+    MONITORINFO monitor_info{ sizeof(monitor_info) };
+    HMONITOR monitor = ::MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+    if (monitor == nullptr || !::GetMonitorInfo(monitor, &monitor_info))
+        return false;
+    rect = monitor_info.rcMonitor;
+    return true;
+}
+
+// Sort secondary taskbars by the monitor Windows actually associates with each host.
 static bool CompareTaskbarByMonitorOrder(const TaskbarInfo& a, const TaskbarInfo& b)
 {
-    // 遍历所有显示器
-    for (const auto& monitor : monitors)
+    CRect a_monitor;
+    CRect b_monitor;
+    const bool a_has_monitor = GetMonitorRectForTaskbar(a.hwnd, a_monitor);
+    const bool b_has_monitor = GetMonitorRectForTaskbar(b.hwnd, b_monitor);
+    if (a_has_monitor != b_has_monitor)
+        return a_has_monitor;
+    if (a_has_monitor && b_has_monitor)
     {
-        // 检查任务栏 a 是否在当前显示器内
-        bool aInMonitor = (a.rect.left >= monitor.rect.left && a.rect.top >= monitor.rect.top);
-        // 检查任务栏 b 是否在当前显示器内
-        bool bInMonitor = (b.rect.left >= monitor.rect.left && b.rect.top >= monitor.rect.top);
-
-        // 如果 a 在当前显示器内而 b 不在，则 a 应该在 b 前面
-        if (aInMonitor && !bInMonitor)
-            return true;
-        // 如果 b 在当前显示器内而 a 不在，则 b 应该在 a 前面
-        if (bInMonitor && !aInMonitor)
-            return false;
-        // 如果 a 和 b 都在当前显示器内，则按任务栏的位置排序
-        if (aInMonitor && bInMonitor)
-        {
-            if (a.rect.left != b.rect.left)
-                return a.rect.left < b.rect.left;
-            return a.rect.top < b.rect.top;
-        }
+        if (a_monitor.top != b_monitor.top)
+            return a_monitor.top < b_monitor.top;
+        if (a_monitor.left != b_monitor.left)
+            return a_monitor.left < b_monitor.left;
     }
-    // 默认情况下，a 和 b 相等
-    return false;
+    if (a.rect.top != b.rect.top)
+        return a.rect.top < b.rect.top;
+    return a.rect.left < b.rect.left;
 }
 
 void CTaskbarHelper::GetAllSecondaryDisplayTaskbar(std::vector<HWND>& secondary_taskbars)

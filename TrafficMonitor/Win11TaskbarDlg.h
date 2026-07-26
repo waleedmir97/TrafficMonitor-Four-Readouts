@@ -11,11 +11,14 @@ private:
     virtual void AdjustTaskbarWndPos(bool force_adjust) override;
     void ResetTaskbarPos() override;
     virtual HWND GetParentHwnd() override;
+    bool GetWidgetsButtonRect(CRect& rect);
 
-    HWND m_hNotify;     //任务栏通知区域的句柄
-    HWND m_hStart;      //开始按钮的句柄
-    CRect m_rcNotify;   //任务栏通知区域的矩形区域
-    CRect m_rcStart;     //开始按钮的矩形区域
+    HWND m_hNotify{};     //任务栏通知区域的句柄
+    HWND m_hStart{};      //开始按钮的句柄
+    CRect m_rcNotify;     //任务栏通知区域的矩形区域
+    CRect m_rcStart;      //开始按钮的矩形区域
+    CRect m_rcWidgets;    //Windows 11 weather/widgets button rectangle
+    CRect m_last_taskbar_rect;
     int m_last_notify_width{};
     int m_last_start_pos{};
 

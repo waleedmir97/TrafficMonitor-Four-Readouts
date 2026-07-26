@@ -143,6 +143,7 @@ protected:
     std::map<CommonDisplayItem, int> m_history_data_count;            //统计添加到历史数据链表的次数
 
     bool m_connot_insert_to_task_bar{ false };	//如果窗口无法嵌入任务栏，则为true
+    bool m_overlay_fallback_active{ false };   //无法嵌入时显示为与任务栏对齐的顶层窗口
     bool m_taskbar_on_top_or_bottom{ true };		//如果任务栏在屏幕顶部或底部，则为ture
     int m_error_code{};
     bool m_menu_popuped{ false };               //指示当前是否有菜单处于弹出状态
@@ -158,6 +159,7 @@ protected:
     //查找任务栏的句柄
     //is_scendary_display：找到的是否为副显示器的任务栏
     HWND FindTaskbarHandle(bool& is_scendary_display);
+    bool AttachToTaskbarHost();
     CString GetMouseTipsInfo();		//获取鼠标提示
 
     void AddHisToList(CommonDisplayItem item_type, int current_usage_percent);		//将当前利用率数值添加进链表
@@ -194,7 +196,7 @@ public:
     void SetToolTipsTopMost();			//设置鼠标提示置顶
     void UpdateToolTips();
 
-    bool GetCannotInsertToTaskBar() const { return m_connot_insert_to_task_bar; }
+    bool GetCannotInsertToTaskBar() const { return m_connot_insert_to_task_bar && !m_overlay_fallback_active; }
     int GetErrorCode() const { return m_error_code; }
     bool IsTasksbarOnTopOrBottom() const { return m_taskbar_on_top_or_bottom; }
 

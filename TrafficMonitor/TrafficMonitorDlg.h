@@ -11,7 +11,6 @@
 #include "Common.h"
 #include "TaskBarDlg.h"
 #include "SkinDlg.h"
-#include "HistoryTrafficDlg.h"
 #include "OptionsDlg.h"
 #include "PictureStatic.h"
 #include "IconSelectDlg.h"
@@ -24,7 +23,6 @@
 #include "PdhHardwareQuery/CpuFreq.h"
 #include "PdhHardwareQuery/GpuUsage.h"
 #include "PdhHardwareQuery/DiskUsage.h"
-#include "HistoryTrafficFile.h"
 
 // CTrafficMonitorDlg 对话框
 class CTrafficMonitorDlg : public CDialog
@@ -117,7 +115,6 @@ protected:
     int m_skin_selected{};      //选择的皮肤序号
 
     SYSTEMTIME m_start_time;    //程序启动时的时间
-    CHistoryTrafficFile m_history_traffic{ theApp.m_history_traffic_path }; //储存历史流量
 
     CToolTipCtrl m_tool_tips;
 
@@ -170,10 +167,6 @@ public:
     void ShowNotifyTip(const wchar_t* title, const wchar_t* message);       //显示通知区提示
 protected:
     void UpdateNotifyIconTip();     //更新通知区图标的鼠标提示
-
-    void SaveHistoryTraffic();
-    void LoadHistoryTraffic();
-    void BackupHistoryTrafficFile();
 
     void _OnOptions(int tab, CWnd* pParent);   //打开“选项”对话框的处理，tab：打开时切换的标签
 
@@ -240,7 +233,6 @@ public:
     afx_msg void OnChangeSkin();
     afx_msg LRESULT OnTaskBarCreated(WPARAM wParam, LPARAM lParam);
     //afx_msg void OnSetFont();
-    afx_msg void OnTrafficHistory();
     afx_msg void OnMouseMove(UINT nFlags, CPoint point);
     afx_msg void OnLButtonDblClk(UINT nFlags, CPoint point);
     afx_msg void OnOptions();

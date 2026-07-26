@@ -31,6 +31,10 @@
 class CTrafficMonitorApp : public CWinApp, public ITrafficMonitor
 {
 public:
+    void EnforceTaskbarOnlyMode();
+    bool IsAutoStartEnabled() const { return m_auto_start_enabled; }
+    bool SetAutoStartEnabled(bool enabled);
+
     //各种路径
     static CTrafficMonitorApp* self;
     wstring m_module_dir;       //程序exe文件的目录
@@ -38,7 +42,6 @@ public:
     wstring m_module_path;      //程序exe文件的路径
     wstring m_module_path_reg;  //用于作为写入注册表开机自项的exe文件的路径（如果路径中有空格，加上引号）
     wstring m_config_path;
-    wstring m_history_traffic_path;
     wstring m_log_path;
     wstring m_skin_path;
     wstring m_system_dir;
@@ -173,6 +176,7 @@ public:
     void SetThemeColor(COLORREF color);
 
 private:
+    bool m_auto_start_enabled{ true };
     //int m_no_multistart_warning_time{};       //用于设置在开机后多长时间内不弹出“已经有一个程序正在运行”的警告提示
     bool m_no_multistart_warning{};         //如果为false，则永远都不会弹出“已经有一个程序正在运行”的警告提示
     bool m_exit_when_start_by_restart_manager{ true };      //如果程序被Windows重启管理器重新启动，则退出程序

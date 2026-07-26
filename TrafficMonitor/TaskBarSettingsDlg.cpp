@@ -15,6 +15,18 @@
 #include "Win11TaskbarSettingDlg.h"
 #include "TaskbarHelper.h"
 
+namespace
+{
+constexpr DoubleClickAction kTaskbarDoubleClickActions[] = {
+    DoubleClickAction::CONNECTION_INFO,
+    DoubleClickAction::SHOW_MORE_INFO,
+    DoubleClickAction::OPTIONS,
+    DoubleClickAction::TASK_MANAGER,
+    DoubleClickAction::SEPCIFIC_APP,
+    DoubleClickAction::NONE,
+};
+}
+
 // CTaskBarSettingsDlg 对话框
 
 IMPLEMENT_DYNAMIC(CTaskBarSettingsDlg, CTabDlg)
@@ -359,13 +371,21 @@ BOOL CTaskBarSettingsDlg::OnInitDialog()
     }
 
     m_double_click_combo.AddString(CCommon::LoadText(IDS_OPEN_CONNECTION_DETIAL));
-    m_double_click_combo.AddString(CCommon::LoadText(IDS_OPEN_HISTORICAL_TRAFFIC));
     m_double_click_combo.AddString(CCommon::LoadText(IDS_SHOW_HIDE_CPU_MEMORY));
     m_double_click_combo.AddString(CCommon::LoadText(IDS_OPEN_OPTION_SETTINGS));
     m_double_click_combo.AddString(CCommon::LoadText(IDS_OPEN_TASK_MANAGER));
     m_double_click_combo.AddString(CCommon::LoadText(IDS_SPECIFIC_APP));
     m_double_click_combo.AddString(CCommon::LoadText(IDS_NONE));
-    m_double_click_combo.SetCurSel(static_cast<int>(m_data.double_click_action));
+    int double_click_selection = _countof(kTaskbarDoubleClickActions) - 1;
+    for (int i{}; i < _countof(kTaskbarDoubleClickActions); ++i)
+    {
+        if (m_data.double_click_action == kTaskbarDoubleClickActions[i])
+        {
+            double_click_selection = i;
+            break;
+        }
+    }
+    m_double_click_combo.SetCurSel(double_click_selection);
 
     m_digit_number_combo.AddString(_T("3"));
     m_digit_number_combo.AddString(_T("4"));
@@ -694,7 +714,11 @@ void CTaskBarSettingsDlg::OnBnClickedSpecifyEachItemColorCheck()
 void CTaskBarSettingsDlg::OnCbnSelchangeDoubleClickCombo()
 {
     // TODO: 在此添加控件通知处理程序代码
-    m_data.double_click_action = static_cast<DoubleClickAction>(m_double_click_combo.GetCurSel());
+    int selection = m_double_click_combo.GetCurSel();
+    if (selection >= 0 && selection < _countof(kTaskbarDoubleClickActions))
+        m_data.double_click_action = kTaskbarDoubleClickActions[selection];
+    else
+        m_data.double_click_action = DoubleClickAction::NONE;
     EnableControl();
 }
 

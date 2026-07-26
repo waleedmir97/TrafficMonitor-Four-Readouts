@@ -153,13 +153,17 @@ void CHistoryTrafficFile::MormalizeData()
 		std::sort(m_history_traffics.begin(), m_history_traffics.end(), HistoryTraffic::DateGreater);
 
 		//如果列表中有相同日期的项目，则将它合并
-		for (int i{}; i < static_cast<int>(m_history_traffics.size() - 1); i++)
+		for (size_t i{}; i + 1 < m_history_traffics.size();)
 		{
 			if (HistoryTraffic::DateEqual(m_history_traffics[i], m_history_traffics[i + 1]))
 			{
 				m_history_traffics[i].up_kBytes += m_history_traffics[i + 1].up_kBytes;
 				m_history_traffics[i].down_kBytes += m_history_traffics[i + 1].down_kBytes;
 				m_history_traffics.erase(m_history_traffics.begin() + i + 1);
+			}
+			else
+			{
+				++i;
 			}
 		}
 	}

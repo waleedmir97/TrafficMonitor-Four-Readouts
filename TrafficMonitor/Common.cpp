@@ -424,6 +424,9 @@ __int64 CCommon::CompareFileTime2(FILETIME time1, FILETIME time2)
 
 void CCommon::WriteLog(const char* str_text, LPCTSTR file_path)
 {
+    if (!theApp.m_debug_log)
+        return;
+
     SYSTEMTIME cur_time;
     GetLocalTime(&cur_time);
     char buff[32];
@@ -436,6 +439,9 @@ void CCommon::WriteLog(const char* str_text, LPCTSTR file_path)
 
 void CCommon::WriteLog(const wchar_t* str_text, LPCTSTR file_path)
 {
+    if (!theApp.m_debug_log)
+        return;
+
     SYSTEMTIME cur_time;
     GetLocalTime(&cur_time);
     char buff[32];

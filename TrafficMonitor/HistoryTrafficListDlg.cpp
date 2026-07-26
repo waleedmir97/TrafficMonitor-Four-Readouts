@@ -66,7 +66,15 @@ void CHistoryTrafficListDlg::AddListRow(const ListRowData& data, unsigned __int6
     }
     m_history_list.SetItemText(index, 3, CCommon::KBytesToString(total_kbytes));
 
-    double range = static_cast<double>(total_kbytes) * 1000 / max_traffic;
+    // A new installation can have only an empty entry for today. Avoid a
+    // divide-by-zero chart scale and keep each bar within its column.
+    double range{};
+    if (max_traffic != 0)
+    {
+        range = static_cast<double>(total_kbytes) * 1000 / max_traffic;
+        if (range > 1000.0)
+            range = 1000.0;
+    }
     COLORREF color;
     if (total_kbytes < 1024 * 1024)		//流量小于1GB时绘制蓝色
         color = TRAFFIC_COLOR_BLUE;
@@ -175,12 +183,6 @@ void CHistoryTrafficListDlg::ShowListData()
             }
             if (list_data.empty() || list_data.back().str != date_str)
             {
-                if(!list_data.empty())
-                {
-                    unsigned __int64 cur_traffic{ list_data.back().up_kBytes + list_data.back().down_kBytes };
-                    if (cur_traffic > max_traffic)
-                        max_traffic = cur_traffic;
-                }
                 ListRowData data;
                 data.str = date_str;
                 data.up_kBytes = traffic.up_kBytes;
@@ -192,6 +194,16 @@ void CHistoryTrafficListDlg::ShowListData()
                 list_data.back().up_kBytes += traffic.up_kBytes;
                 list_data.back().down_kBytes += traffic.down_kBytes;
             }
+        }
+
+        // Determine the scale after all grouped rows are complete. The old
+        // loop skipped the final group, which could let its bar exceed the
+        // available chart width.
+        for (const auto& data : list_data)
+        {
+            unsigned __int64 total_kbytes{ data.up_kBytes + data.down_kBytes };
+            if (total_kbytes > max_traffic)
+                max_traffic = total_kbytes;
         }
 
         for (const auto& data : list_data)

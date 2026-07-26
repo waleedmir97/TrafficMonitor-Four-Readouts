@@ -62,6 +62,87 @@ void CTrafficMonitorApp::LoadLanguageConfig()
     m_general_data.language = static_cast<WORD>(ini.GetInt(_T("general"), _T("language"), 0));
 }
 
+void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
+{
+    // This build deliberately exposes one fixed, transient taskbar readout.
+    m_general_data.portable_mode = true;
+    m_general_data.show_notify_icon = false;
+    m_general_data.check_update_when_start = false;
+    m_general_data.traffic_tip_enable = false;
+    m_general_data.memory_usage_tip.enable = false;
+    m_general_data.cpu_temp_tip.enable = false;
+    m_general_data.gpu_temp_tip.enable = false;
+    m_general_data.hdd_temp_tip.enable = false;
+    m_general_data.mainboard_temp_tip.enable = false;
+    m_general_data.show_all_interface = false;
+    m_general_data.cpu_usage_acquire_method = GeneralSettingData::CA_PDH;
+    m_general_data.hardware_monitor_item = 0;
+    m_general_data.monitor_time_span = 1000;
+
+    m_cfg_data.m_show_task_bar_wnd = true;
+    m_cfg_data.m_hide_main_window = true;
+    m_cfg_data.m_auto_select = true;
+    m_cfg_data.m_select_all = false;
+    m_cfg_data.m_connection_name.clear();
+    m_cfg_data.m_skin_name.clear();
+    m_cfg_data.skin_auto_adapt = false;
+    m_cfg_data.skin_name_dark_mode.clear();
+    m_cfg_data.skin_name_light_mode.clear();
+    m_main_wnd_data.double_click_action = DoubleClickAction::NONE;
+    m_debug_log = false;
+
+    m_taskbar_data.display_item = DisplayItemSet{ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE };
+    m_taskbar_data.plugin_display_item.data().clear();
+    m_taskbar_data.item_order.SetOrder({ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE });
+    m_taskbar_data.show_taskbar_wnd_in_secondary_display = false;
+    m_taskbar_data.secondary_display_index = 0;
+    m_taskbar_data.font.name = L"Segoe UI";
+    m_taskbar_data.font.size = 9;
+    m_taskbar_data.font.bold = false;
+    m_taskbar_data.font.italic = false;
+    m_taskbar_data.font.underline = false;
+    m_taskbar_data.font.strike_out = false;
+    m_taskbar_data.disp_str.Get(TDI_UP) = L"\x2191: ";
+    m_taskbar_data.disp_str.Get(TDI_DOWN) = L"\x2193: ";
+    m_taskbar_data.disp_str.Get(TDI_CPU) = L"CPU: ";
+    m_taskbar_data.disp_str.Get(TDI_GPU_USAGE) = L"GPU: ";
+    m_taskbar_data.specify_each_item_color = true;
+    const COLORREF text_color = CWindowsSettingHelper::IsWindows10LightTheme() ? RGB(0, 0, 0) : RGB(255, 255, 255);
+    for (const auto item : { TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE })
+        m_taskbar_data.text_colors[item] = TaskbarItemColor{ text_color, text_color };
+    m_taskbar_data.back_color = TASKBAR_TRANSPARENT_COLOR1;
+    m_taskbar_data.transparent_color = TASKBAR_TRANSPARENT_COLOR1;
+    m_taskbar_data.status_bar_color = RGB(90, 90, 90);
+    m_taskbar_data.auto_adapt_light_theme = false;
+    m_taskbar_data.auto_set_background_color = false;
+    m_taskbar_data.auto_save_taskbar_color_settings_to_preset = false;
+    m_taskbar_data.speed_short_mode = false;
+    m_taskbar_data.unit_byte = true;
+    m_taskbar_data.speed_unit = SpeedUnit::AUTO;
+    m_taskbar_data.hide_unit = false;
+    m_taskbar_data.hide_percent = false;
+    m_taskbar_data.value_right_align = true;
+    m_taskbar_data.horizontal_arrange = false;
+    m_taskbar_data.show_status_bar = false;
+    m_taskbar_data.show_netspeed_figure = false;
+    m_taskbar_data.cm_graph_type = false;
+    m_taskbar_data.show_graph_dashed_box = false;
+    m_taskbar_data.separate_value_unit_with_space = true;
+    m_taskbar_data.show_tool_tip = false;
+    m_taskbar_data.digits_number = 4;
+    m_taskbar_data.tbar_wnd_on_left = false;
+    m_taskbar_data.tbar_wnd_snap = false;
+    m_taskbar_data.item_space = 8;
+    m_taskbar_data.vertical_margin = 0;
+    m_taskbar_data.window_offset_top = 0;
+    m_taskbar_data.window_offset_left = 0;
+    m_taskbar_data.avoid_overlap_with_widgets = false;
+    m_taskbar_data.disable_d2d = true;
+    m_taskbar_data.enable_colorful_emoji = false;
+    m_taskbar_data.double_click_action = DoubleClickAction::NONE;
+    m_taksbar_transparent_color_enable = true;
+}
+
 void CTrafficMonitorApp::LoadConfig()
 {
     CSettingsHelper ini;
@@ -280,9 +361,6 @@ void CTrafficMonitorApp::LoadConfig()
 
     //其他设置
     //m_cfg_data.m_show_internet_ip = ini.GetBool(L"connection_details", L"show_internet_ip", false);
-    m_cfg_data.m_use_log_scale = ini.GetBool(_T("histroy_traffic"), _T("use_log_scale"), true);
-    m_cfg_data.m_sunday_first = ini.GetBool(_T("histroy_traffic"), _T("sunday_first"), true);
-    m_cfg_data.m_view_type = static_cast<HistoryTrafficViewType>(ini.GetInt(_T("histroy_traffic"), _T("view_type"), static_cast<int>(HistoryTrafficViewType::HV_DAY)));
 
     m_no_multistart_warning = ini.GetBool(_T("other"), _T("no_multistart_warning"), false);
     m_notify_interval = ini.GetInt(_T("other"), _T("notify_interval"), 60);
@@ -293,10 +371,16 @@ void CTrafficMonitorApp::LoadConfig()
     m_last_light_mode = ini.GetBool(L"other", L"last_light_mode", CWindowsSettingHelper::IsWindows10LightTheme());
     m_show_mouse_panetrate_tip = ini.GetBool(L"other", L"show_mouse_panetrate_tip", true);
     m_show_dot_net_notinstalled_tip = ini.GetBool(L"other", L"show_dot_net_notinstalled_tip", true);
+
+    EnforceTaskbarOnlyMode();
 }
 
 void CTrafficMonitorApp::SaveConfig()
 {
+    // The fixed four-readout build has no user-facing settings to persist.
+    return;
+
+#if 0
     CSettingsHelper ini;
 
     //常规设置
@@ -434,9 +518,6 @@ void CTrafficMonitorApp::SaveConfig()
 
     //其他设置
     //ini.WriteBool(L"connection_details", L"show_internet_ip", m_cfg_data.m_show_internet_ip);
-    ini.WriteBool(L"histroy_traffic", L"use_log_scale", m_cfg_data.m_use_log_scale);
-    ini.WriteBool(L"histroy_traffic", L"sunday_first", m_cfg_data.m_sunday_first);
-    ini.WriteInt(L"histroy_traffic", L"view_type", static_cast<int>(m_cfg_data.m_view_type));
 
     ini.WriteBool(_T("other"), _T("no_multistart_warning"), m_no_multistart_warning);
     ini.WriteBool(_T("other"), _T("exit_when_start_by_restart_manager"), m_exit_when_start_by_restart_manager);
@@ -463,6 +544,7 @@ void CTrafficMonitorApp::SaveConfig()
         m_cannot_save_config_warning = false;
         return;
     }
+#endif
 }
 
 void CTrafficMonitorApp::LoadPluginDisabledSettings()
@@ -482,6 +564,12 @@ void CTrafficMonitorApp::LoadGlobalConfig()
 
     CIniHelper ini{ global_cfg_path };
     m_general_data.portable_mode = ini.GetBool(L"config", L"portable_mode", portable_mode_default);
+
+    CRegKey settings_key;
+    DWORD auto_start_enabled{ 1 };
+    if (settings_key.Open(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts") == ERROR_SUCCESS)
+        settings_key.QueryDWORDValue(L"AutoStartEnabled", auto_start_enabled);
+    m_auto_start_enabled = (auto_start_enabled != 0);
 
     //执行一次保存操作，以检查当前目录是否有写入权限
     m_module_dir_writable = ini.Save();
@@ -654,6 +742,19 @@ bool  CTrafficMonitorApp::SetAutoRun(bool auto_run)
 #endif
 }
 
+bool CTrafficMonitorApp::SetAutoStartEnabled(bool enabled)
+{
+    CRegKey settings_key;
+    if (settings_key.Create(HKEY_CURRENT_USER, L"Software\\TrafficMonitorFourReadouts") != ERROR_SUCCESS
+        || settings_key.SetDWORDValue(L"AutoStartEnabled", enabled ? 1 : 0) != ERROR_SUCCESS)
+    {
+        return false;
+    }
+
+    m_auto_start_enabled = enabled;
+    return SetAutoRun(enabled);
+}
+
 bool CTrafficMonitorApp::GetAutoRun(wstring* auto_run_path)
 {
     if (auto_run_path != nullptr)
@@ -718,7 +819,7 @@ bool CTrafficMonitorApp::SetAutoRunByRegistry(bool auto_run)
         wchar_t buff[256];
         ULONG size{ 256 };
         if (key.QueryStringValue(APP_NAME, buff, &size) != ERROR_SUCCESS)
-            return false;
+            return true;
         if (key.DeleteValue(APP_NAME) != ERROR_SUCCESS)
         {
             AfxMessageBox(CCommon::LoadText(IDS_AUTORUN_DELETE_FAILED), MB_OK | MB_ICONWARNING);
@@ -813,7 +914,7 @@ void CTrafficMonitorApp::InitMenuResourse()
     auto addIconsForMainWindowMenu = [&](const CMenu& menu)
     {
         CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 0, TRUE, GetMenuIcon(IDI_CONNECTION));
-        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 11, TRUE, GetMenuIcon(IDI_FUNCTION));
+        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 9, TRUE, GetMenuIcon(IDI_FUNCTION));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_NETWORK_INFO, FALSE, GetMenuIcon(IDI_INFO));
         if (!m_win_version.IsWindows11OrLater())
             CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_ALWAYS_ON_TOP, FALSE, GetMenuIcon(IDI_PIN));
@@ -825,16 +926,11 @@ void CTrafficMonitorApp::InitMenuResourse()
         //    CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_NOTIFY_ICON, FALSE, GetMenuIcon(IDI_NOTIFY));
         if (!m_win_version.IsWindows11OrLater())
             CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_CPU_MEMORY, FALSE, GetMenuIcon(IDI_MORE));
-        if (!m_win_version.IsWindows11OrLater())
-            CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_TASK_BAR_WND, FALSE, GetMenuIcon(IDI_TASKBAR_WINDOW));
-        if (!m_win_version.IsWindows11OrLater())
-            CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_MAIN_WND, FALSE, GetMenuIcon(IDI_MAIN_WINDOW));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_CHANGE_SKIN, FALSE, GetMenuIcon(IDI_SKIN));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_CHANGE_NOTIFY_ICON, FALSE, GetMenuIcon(IDI_NOTIFY));
-        CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_TRAFFIC_HISTORY, FALSE, GetMenuIcon(IDI_STATISTICS));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_PLUGIN_MANAGE, FALSE, GetMenuIcon(IDI_PLUGINS));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_OPTIONS, FALSE, GetMenuIcon(IDI_SETTINGS));
-        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 14, TRUE, GetMenuIcon(IDI_HELP));
+        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 12, TRUE, GetMenuIcon(IDI_HELP));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_HELP, FALSE, GetMenuIcon(IDI_HELP));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_APP_ABOUT, FALSE, GetMenuIcon(IDR_MAINFRAME));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_APP_EXIT, FALSE, GetMenuIcon(IDI_EXIT));
@@ -848,17 +944,13 @@ void CTrafficMonitorApp::InitMenuResourse()
     {
         CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 0, TRUE, GetMenuIcon(IDI_CONNECTION));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_NETWORK_INFO, FALSE, GetMenuIcon(IDI_INFO));
-        CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_TRAFFIC_HISTORY, FALSE, GetMenuIcon(IDI_STATISTICS));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_DISPLAY_SETTINGS, FALSE, GetMenuIcon(IDI_ITEM));
         //if (!m_win_version.IsWindows11OrLater())
         //    CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_NOTIFY_ICON, FALSE, GetMenuIcon(IDI_NOTIFY));
-        if (!m_win_version.IsWindows11OrLater())
-            CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_MAIN_WND, FALSE, GetMenuIcon(IDI_MAIN_WINDOW));
-        CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_SHOW_TASK_BAR_WND, FALSE, GetMenuIcon(IDI_CLOSE));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_OPEN_TASK_MANAGER, FALSE, GetMenuIcon(IDI_TASK_MANAGER));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_OPTIONS2, FALSE, GetMenuIcon(IDI_SETTINGS));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_PLUGIN_MANAGE, FALSE, GetMenuIcon(IDI_PLUGINS));
-        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 13, TRUE, GetMenuIcon(IDI_HELP));
+        CMenuIcon::AddIconToMenuItem(menu.GetSubMenu(0)->GetSafeHmenu(), 8, TRUE, GetMenuIcon(IDI_HELP));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_HELP, FALSE, GetMenuIcon(IDI_HELP));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_APP_ABOUT, FALSE, GetMenuIcon(IDR_MAINFRAME));
         CMenuIcon::AddIconToMenuItem(menu.GetSafeHmenu(), ID_APP_EXIT, FALSE, GetMenuIcon(IDI_EXIT));
@@ -943,6 +1035,7 @@ BOOL CTrafficMonitorApp::InitInstance()
     m_appdata_dir = CCommon::GetAppDataConfigDir();
 
     LoadGlobalConfig();
+    m_general_data.portable_mode = true;
 
 #ifdef _DEBUG
     m_config_dir = L".\\";
@@ -956,17 +1049,14 @@ BOOL CTrafficMonitorApp::InitInstance()
 #endif
     //AppData里面的程序配置文件路径
     m_config_path = m_config_dir + L"config.ini";
-    m_history_traffic_path = m_config_dir + L"history_traffic.dat";
     m_log_path = m_config_dir + L"error.log";
 
     //#ifndef _DEBUG
     //  //原来的、程序所在目录下的配置文件的路径
     //  wstring config_path_old = m_module_dir + L"config.ini";
-    //  wstring history_traffic_path_old = m_module_dir + L"history_traffic.dat";
     //  wstring log_path_old = m_module_dir + L"error.log";
     //  //如果程序所在目录下含有配置文件，则将其移动到AppData对应的目录下面
     //  CCommon::MoveAFile(config_path_old.c_str(), m_config_path.c_str());
-    //  CCommon::MoveAFile(history_traffic_path_old.c_str(), m_history_traffic_path.c_str());
     //  CCommon::MoveAFile(log_path_old.c_str(), m_log_path.c_str());
     //#endif // !_DEBUG
 
@@ -978,9 +1068,6 @@ BOOL CTrafficMonitorApp::InitInstance()
     //初始化字符串资源
     m_str_table.Init();
 
-    //载入插件
-    LoadPluginDisabledSettings();
-    m_plugins.LoadPlugins();
 
     //从ini文件载入设置
     LoadConfig();
@@ -988,9 +1075,9 @@ BOOL CTrafficMonitorApp::InitInstance()
     //检查是否已有实例正在运行
     LPCTSTR mutex_name{};
 #ifdef _DEBUG
-    mutex_name = _T("TrafficMonitor-e8Ahk24HP6JC8hDy");
+    mutex_name = _T("TrafficMonitorFourReadouts-4Lcn8uVgD9rL1sK2");
 #else
-    mutex_name = _T("TrafficMonitor-1419J3XLKL1w8OZc");
+    mutex_name = _T("TrafficMonitorFourReadouts-B6P7qE2wH5zN9xR4");
 #endif
     HANDLE hMutex = ::CreateMutex(NULL, TRUE, mutex_name);
     if (hMutex != NULL)
@@ -1020,7 +1107,16 @@ BOOL CTrafficMonitorApp::InitInstance()
         }
     }
 
-    m_taskbar_default_style.LoadConfig();
+    // Start at sign-in by default; the compact settings dialog can disable it.
+    if (m_auto_start_enabled)
+    {
+        if (!GetAutoRun(nullptr))
+            SetAutoRun(true);
+    }
+    else if (GetAutoRun(nullptr))
+    {
+        SetAutoRun(false);
+    }
 
     //SaveConfig();
 
