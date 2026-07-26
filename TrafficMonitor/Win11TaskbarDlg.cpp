@@ -8,6 +8,8 @@
 namespace
 {
     constexpr int WIDGETS_GAP = 6;
+    constexpr ULONGLONG WIDGETS_QUERY_INTERVAL_MS = 500;
+    constexpr ULONGLONG WIDGETS_MISS_GRACE_MS = 3000;
 
     bool IsSameRect(const CRect& left, const CRect& right)
     {
@@ -32,10 +34,7 @@ void CWin11TaskbarDlg::AdjustTaskbarWndPos(bool force_adjust)
         m_rcStart.MoveToXY(m_rcStart.left - m_rcTaskbar.left, m_rcStart.top - m_rcTaskbar.top);
     }
 
-    CRect widgets_rect;
-    GetWidgetsButtonRect(widgets_rect);
-    const bool widgets_rect_changed = !IsSameRect(widgets_rect, m_rcWidgets);
-    m_rcWidgets = widgets_rect;
+    const bool widgets_rect_changed = UpdateWidgetsButtonRect(force_adjust);
 
     m_rect.right = m_rect.left + m_window_width;
     m_rect.bottom = m_rect.top + m_window_height;
@@ -104,6 +103,8 @@ void CWin11TaskbarDlg::InitTaskbarWnd()
     m_hStart = ::FindWindowEx(m_hTaskbar, nullptr, L"Start", nullptr);
     m_last_taskbar_rect.SetRectEmpty();
     m_rcWidgets.SetRectEmpty();
+    m_last_widgets_query_tick = 0;
+    m_last_widgets_success_tick = 0;
 }
 
 void CWin11TaskbarDlg::ResetTaskbarPos()
@@ -111,7 +112,34 @@ void CWin11TaskbarDlg::ResetTaskbarPos()
     m_last_taskbar_rect.SetRectEmpty();
     m_last_notify_width = 0;
     m_last_start_pos = 0;
-    m_rcWidgets.SetRectEmpty();
+}
+
+bool CWin11TaskbarDlg::UpdateWidgetsButtonRect(bool force_query)
+{
+    const ULONGLONG now = ::GetTickCount64();
+    if (!force_query && m_last_widgets_query_tick != 0 &&
+        now - m_last_widgets_query_tick < WIDGETS_QUERY_INTERVAL_MS)
+    {
+        return false;
+    }
+
+    m_last_widgets_query_tick = now;
+    CRect widgets_rect;
+    if (GetWidgetsButtonRect(widgets_rect))
+    {
+        const bool changed = !IsSameRect(widgets_rect, m_rcWidgets);
+        m_rcWidgets = widgets_rect;
+        m_last_widgets_success_tick = now;
+        return changed;
+    }
+
+    if (!m_rcWidgets.IsRectEmpty() && m_last_widgets_success_tick != 0 &&
+        now - m_last_widgets_success_tick >= WIDGETS_MISS_GRACE_MS)
+    {
+        m_rcWidgets.SetRectEmpty();
+        return true;
+    }
+    return false;
 }
 
 bool CWin11TaskbarDlg::GetWidgetsButtonRect(CRect& rect)

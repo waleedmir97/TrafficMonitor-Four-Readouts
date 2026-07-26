@@ -15,23 +15,25 @@ recording or export.
 
 ## Current release
 
-`v1.2.0` is the current x64 build. On Windows 11 it tries to sit immediately
+`v1.3.0` is the current x64 build. On Windows 11 it tries to sit immediately
 to the right of the Windows Weather/Widgets control. If that control is hidden,
 unavailable, or leaves insufficient room, the app uses TrafficMonitor's
-existing non-overlapping taskbar fallback.
+existing non-overlapping taskbar fallback. The widget follows the taskbar
+through full-screen transitions and debounces temporary Weather lookup failures
+so shell activity cannot make it jump or disappear.
 
 Download the current ZIP from
 [GitHub Releases](https://github.com/waleedmir97/TrafficMonitor-Four-Readouts/releases/latest).
 Its SHA-256 is:
 
 ```text
-18101807CA53455902EA6C7F42E3D1DA4BF8E846FE21BF43ECDFEE7FF1BE68FA
+7310EC47539115267813213B27F98957C6D9FD5128A88BE9619D1542EF6A806F
 ```
 
 The executable inside has SHA-256:
 
 ```text
-F181E063EBDD9763CCB1C2F208450943C0EDE0BFDE13BEFF0426FD4C517D5BB9
+1F84E3B008612AB666FBDE4AB8A7C0D70D378DA56B49A4798AD01A8A58E3A3FB
 ```
 
 ## Install and use
@@ -87,18 +89,19 @@ Bin\x64\Release (lite)\TrafficMonitor.exe
 
 ## Version history
 
-Three compiled builds are preserved as releases:
+Four compiled builds are preserved as releases:
 
 - `v1.0.0`: fixed taskbar-only, text-only four-readout build
 - `v1.1.0`: compact settings, default automatic startup, and widget recovery
 - `v1.2.0`: Windows 11 Weather/Widgets anchoring with a compatibility fallback
+- `v1.3.0`: stable taskbar attachment, full-screen behavior, and anchor recovery
 
 See [RELEASES.md](RELEASES.md) for dates and verified hashes.
 
 The exact intermediate source snapshots for `v1.0.0` and `v1.1.0` were not
 retained when those binaries were built. Their original ZIPs are preserved
 unchanged as historical release assets. The repository contains the exact
-source for `v1.2.0`, based on the upstream `V1.86` commit history.
+source for `v1.2.0` and `v1.3.0`, based on the upstream `V1.86` commit history.
 
 ## Upstream and license
 

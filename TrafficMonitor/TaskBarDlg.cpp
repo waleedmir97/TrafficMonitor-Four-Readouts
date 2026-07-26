@@ -491,24 +491,9 @@ void CTaskBarDlg::MoveWindow(CRect rect)
 
     if (m_overlay_fallback_active)
     {
-        MONITORINFO monitor_info{ sizeof(monitor_info) };
-        HMONITOR monitor = ::MonitorFromWindow(m_hTaskbar, MONITOR_DEFAULTTONEAREST);
-        if (monitor != nullptr && ::GetMonitorInfo(monitor, &monitor_info))
-        {
-            CRect visible_taskbar;
-            visible_taskbar.IntersectRect(&m_rcTaskbar, &monitor_info.rcMonitor);
-            const int visible_thickness = m_taskbar_on_top_or_bottom ? visible_taskbar.Height() : visible_taskbar.Width();
-            const int expected_thickness = m_taskbar_on_top_or_bottom ? m_rcTaskbar.Height() : m_rcTaskbar.Width();
-            const int min_visible_thickness = min(expected_thickness, max(DPI(8), m_window_height / 2));
-            if (visible_thickness < min_visible_thickness)
-            {
-                ShowWindow(SW_HIDE);
-                return;
-            }
-        }
-
         rect.MoveToXY(rect.left + m_rcTaskbar.left, rect.top + m_rcTaskbar.top);
-        ::SetWindowPos(GetSafeHwnd(), HWND_TOPMOST, rect.left, rect.top, rect.Width(), rect.Height(), SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        ::SetWindowPos(GetSafeHwnd(), nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
+            SWP_NOACTIVATE | SWP_NOZORDER);
         return;
     }
 
@@ -587,6 +572,12 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
     }
 
     AdjustTaskbarWndPos(force_adjust);
+    UpdateOverlayVisibility();
+    if (!m_overlay_fallback_active && !m_connot_insert_to_task_bar &&
+        !::IsWindowVisible(m_hWnd) && ::IsWindowVisible(m_hTaskbar))
+    {
+        ShowWindow(SW_SHOWNOACTIVATE);
+    }
     m_is_width_changed = false;
     return true;
 }
@@ -743,6 +734,15 @@ bool CTaskBarDlg::AttachToTaskbarHost()
         return false;
     }
 
+    const LONG_PTR original_style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
+    const HWND original_owner = ::GetWindow(m_hWnd, GW_OWNER);
+
+    // SetParent does not update WS_POPUP/WS_CHILD. Make the relationship real
+    // before validating it so Explorer controls clipping and full-screen Z order.
+    ::SetWindowLongPtr(m_hWnd, GWL_STYLE, (original_style & ~WS_POPUP) | WS_CHILD);
+    ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+
     ::SetLastError(ERROR_SUCCESS);
     HWND previous_parent = ::SetParent(m_hWnd, parent);
     const DWORD set_parent_error = ::GetLastError();
@@ -752,12 +752,64 @@ bool CTaskBarDlg::AttachToTaskbarHost()
     {
         m_error_code = set_parent_failed ? set_parent_error : ERROR_INVALID_WINDOW_HANDLE;
         ::SetParent(m_hWnd, nullptr);
+        ::SetWindowLongPtr(m_hWnd, GWL_STYLE, original_style);
+        if (::IsWindow(original_owner))
+            ::SetWindowLongPtr(m_hWnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(original_owner));
+        ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
         ModifyStyleEx(0, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
         m_overlay_fallback_active = true;
         return false;
     }
 
+    ::SetWindowPos(m_hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     return true;
+}
+
+bool CTaskBarDlg::ShouldShowOverlay() const
+{
+    if (!m_overlay_fallback_active || !::IsWindow(m_hWnd) ||
+        !::IsWindow(m_hTaskbar) || !::IsWindowVisible(m_hTaskbar))
+    {
+        return false;
+    }
+
+    MONITORINFO monitor_info{ sizeof(monitor_info) };
+    HMONITOR monitor = ::MonitorFromWindow(m_hTaskbar, MONITOR_DEFAULTTONEAREST);
+    if (monitor == nullptr || !::GetMonitorInfo(monitor, &monitor_info))
+        return false;
+
+    CRect visible_taskbar;
+    visible_taskbar.IntersectRect(&m_rcTaskbar, &monitor_info.rcMonitor);
+    const int visible_thickness = m_taskbar_on_top_or_bottom ? visible_taskbar.Height() : visible_taskbar.Width();
+    const int expected_thickness = m_taskbar_on_top_or_bottom ? m_rcTaskbar.Height() : m_rcTaskbar.Width();
+    const int min_visible_thickness = min(expected_thickness, max(DPI(8), m_window_height / 2));
+    if (expected_thickness <= 0 || visible_thickness < min_visible_thickness)
+        return false;
+
+    HWND foreground = ::GetForegroundWindow();
+    return foreground == nullptr || foreground == m_hWnd || !CCommon::IsForegroundFullscreen(monitor);
+}
+
+void CTaskBarDlg::UpdateOverlayVisibility()
+{
+    if (!m_overlay_fallback_active || !::IsWindow(m_hWnd))
+        return;
+
+    if (ShouldShowOverlay())
+    {
+        const LONG_PTR ex_style = ::GetWindowLongPtr(m_hWnd, GWL_EXSTYLE);
+        if (!::IsWindowVisible(m_hWnd) || (ex_style & WS_EX_TOPMOST) == 0)
+        {
+            ::SetWindowPos(m_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+    else if (::IsWindowVisible(m_hWnd))
+    {
+        ShowWindow(SW_HIDE);
+    }
 }
 
 CString CTaskBarDlg::GetMouseTipsInfo()

@@ -160,6 +160,8 @@ protected:
     //is_scendary_display：找到的是否为副显示器的任务栏
     HWND FindTaskbarHandle(bool& is_scendary_display);
     bool AttachToTaskbarHost();
+    bool ShouldShowOverlay() const;
+    void UpdateOverlayVisibility();
     CString GetMouseTipsInfo();		//获取鼠标提示
 
     void AddHisToList(CommonDisplayItem item_type, int current_usage_percent);		//将当前利用率数值添加进链表

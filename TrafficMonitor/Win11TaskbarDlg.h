@@ -12,6 +12,7 @@ private:
     void ResetTaskbarPos() override;
     virtual HWND GetParentHwnd() override;
     bool GetWidgetsButtonRect(CRect& rect);
+    bool UpdateWidgetsButtonRect(bool force_query);
 
     HWND m_hNotify{};     //任务栏通知区域的句柄
     HWND m_hStart{};      //开始按钮的句柄
@@ -21,9 +22,10 @@ private:
     CRect m_last_taskbar_rect;
     int m_last_notify_width{};
     int m_last_start_pos{};
+    ULONGLONG m_last_widgets_query_tick{};
+    ULONGLONG m_last_widgets_success_tick{};
 
     // 通过 CTaskBarDlg 继承
     void CheckTaskbarOnTopOrBottom() override;
 
 };
-

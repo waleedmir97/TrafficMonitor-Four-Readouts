@@ -3,6 +3,27 @@
 The hashes below were calculated from the preserved local artifacts before
 publication.
 
+## v1.3.0 - Taskbar lifecycle fixes
+
+Built 2026-07-25 from the source currently in this repository.
+
+Asset:
+`TrafficMonitor_V1.86_x64_FourReadouts_LifecycleFix_CodexBuild.zip`
+
+```text
+ZIP SHA-256: 7310EC47539115267813213B27F98957C6D9FD5128A88BE9619D1542EF6A806F
+EXE SHA-256: 1F84E3B008612AB666FBDE4AB8A7C0D70D378DA56B49A4798AD01A8A58E3A3FB
+```
+
+Changes:
+
+- Uses the correct child-window styles when attaching to Explorer's taskbar.
+- Hides the compatibility overlay during full-screen use and restores it
+  deterministically when the taskbar is available again.
+- Keeps the last valid Weather anchor through transient UI Automation failures.
+- Separates positioning from visibility so Task Manager cannot accidentally
+  redisplay a previously hidden widget.
+
 ## v1.2.0 - Weather anchor
 
 Built 2026-07-16 from the source currently in this repository.
