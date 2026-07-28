@@ -27,8 +27,3 @@ void CWineTaskbarDlg::CheckTaskbarOnTopOrBottom()
 {
     m_taskbar_on_top_or_bottom = true;
 }
-
-HWND CWineTaskbarDlg::GetParentHwnd()
-{
-    return GetDesktopWindow()->GetSafeHwnd();
-}

@@ -1,25 +1,10 @@
 ﻿#include "stdafx.h"
 #include "Win11TaskbarDlg.h"
 #include "WindowsSettingHelper.h"
-#include <UIAutomation.h>
-
-#pragma comment(lib, "UIAutomationCore.lib")
-
-namespace
-{
-    constexpr int WIDGETS_GAP = 6;
-    constexpr ULONGLONG WIDGETS_QUERY_INTERVAL_MS = 500;
-    constexpr ULONGLONG WIDGETS_MISS_GRACE_MS = 3000;
-
-    bool IsSameRect(const CRect& left, const CRect& right)
-    {
-        return left.left == right.left && left.top == right.top &&
-            left.right == right.right && left.bottom == right.bottom;
-    }
-}
-
 void CWin11TaskbarDlg::AdjustTaskbarWndPos(bool force_adjust)
 {
+    if (!::IsWindow(m_hNotify))
+        m_hNotify = ::FindWindowEx(m_hTaskbar, nullptr, L"TrayNotifyWnd", nullptr);
     m_rcNotify.SetRectEmpty();
     if (::IsWindow(m_hNotify))
     {
@@ -27,6 +12,8 @@ void CWin11TaskbarDlg::AdjustTaskbarWndPos(bool force_adjust)
         m_rcNotify.MoveToXY(m_rcNotify.left - m_rcTaskbar.left, m_rcNotify.top - m_rcTaskbar.top);
     }
 
+    if (!::IsWindow(m_hStart))
+        m_hStart = ::FindWindowEx(m_hTaskbar, nullptr, L"Start", nullptr);
     m_rcStart.SetRectEmpty();
     if (::IsWindow(m_hStart))
     {
@@ -34,36 +21,24 @@ void CWin11TaskbarDlg::AdjustTaskbarWndPos(bool force_adjust)
         m_rcStart.MoveToXY(m_rcStart.left - m_rcTaskbar.left, m_rcStart.top - m_rcTaskbar.top);
     }
 
-    const bool widgets_rect_changed = UpdateWidgetsButtonRect(force_adjust);
-
     m_rect.right = m_rect.left + m_window_width;
     m_rect.bottom = m_rect.top + m_window_height;
     const bool taskbar_rect_changed = m_rcTaskbar.left != m_last_taskbar_rect.left ||
         m_rcTaskbar.top != m_last_taskbar_rect.top || m_rcTaskbar.right != m_last_taskbar_rect.right ||
         m_rcTaskbar.bottom != m_last_taskbar_rect.bottom;
-    if (force_adjust || taskbar_rect_changed || m_rcNotify.Width() != m_last_notify_width ||
-        m_rcStart.left != m_last_start_pos || widgets_rect_changed)
+    const bool notify_rect_changed = m_rcNotify.left != m_last_notify_rect.left ||
+        m_rcNotify.top != m_last_notify_rect.top || m_rcNotify.right != m_last_notify_rect.right ||
+        m_rcNotify.bottom != m_last_notify_rect.bottom;
+    const bool start_rect_changed = m_rcStart.left != m_last_start_rect.left ||
+        m_rcStart.top != m_last_start_rect.top || m_rcStart.right != m_last_start_rect.right ||
+        m_rcStart.bottom != m_last_start_rect.bottom;
+    if (force_adjust || taskbar_rect_changed || notify_rect_changed || start_rect_changed)
     {
         m_last_taskbar_rect = m_rcTaskbar;
-        m_last_notify_width = m_rcNotify.Width();
-        m_last_start_pos = m_rcStart.left;
+        m_last_notify_rect = m_rcNotify;
+        m_last_start_rect = m_rcStart;
 
-        bool placed_after_widgets = false;
-        if (!m_rcWidgets.IsRectEmpty())
-        {
-            const int target_x = m_rcWidgets.right + DPI(WIDGETS_GAP);
-            int available_right = m_rcTaskbar.Width();
-            if (!m_rcStart.IsRectEmpty() && m_rcStart.left > m_rcWidgets.right)
-                available_right = m_rcStart.left - DPI(WIDGETS_GAP);
-
-            if (target_x + m_rect.Width() <= available_right)
-            {
-                m_rect.MoveToX(target_x);
-                placed_after_widgets = true;
-            }
-        }
-
-        if (!placed_after_widgets && (!theApp.m_taskbar_data.tbar_wnd_on_left || !CWindowsSettingHelper::IsTaskbarCenterAlign()))
+        if (!theApp.m_taskbar_data.tbar_wnd_on_left || !CWindowsSettingHelper::IsTaskbarCenterAlign())
         {
             int notify_x_pos = m_rcNotify.IsRectEmpty() ? 0 : m_rcNotify.left;
             if (notify_x_pos <= 0)
@@ -73,11 +48,11 @@ void CWin11TaskbarDlg::AdjustTaskbarWndPos(bool force_adjust)
             }
             m_rect.MoveToX(notify_x_pos - m_rect.Width() + 2);
         }
-        else if (!placed_after_widgets && theApp.m_taskbar_data.tbar_wnd_snap && !m_rcStart.IsRectEmpty())
+        else if (theApp.m_taskbar_data.tbar_wnd_snap && !m_rcStart.IsRectEmpty())
         {
             m_rect.MoveToX(m_rcStart.left - m_rect.Width() - 2);
         }
-        else if (!placed_after_widgets)
+        else
         {
             m_rect.MoveToX(2);
         }
@@ -102,108 +77,15 @@ void CWin11TaskbarDlg::InitTaskbarWnd()
     m_hNotify = ::FindWindowEx(m_hTaskbar, nullptr, L"TrayNotifyWnd", nullptr);
     m_hStart = ::FindWindowEx(m_hTaskbar, nullptr, L"Start", nullptr);
     m_last_taskbar_rect.SetRectEmpty();
-    m_rcWidgets.SetRectEmpty();
-    m_last_widgets_query_tick = 0;
-    m_last_widgets_success_tick = 0;
+    m_last_notify_rect.SetRectEmpty();
+    m_last_start_rect.SetRectEmpty();
 }
 
 void CWin11TaskbarDlg::ResetTaskbarPos()
 {
     m_last_taskbar_rect.SetRectEmpty();
-    m_last_notify_width = 0;
-    m_last_start_pos = 0;
-}
-
-bool CWin11TaskbarDlg::UpdateWidgetsButtonRect(bool force_query)
-{
-    const ULONGLONG now = ::GetTickCount64();
-    if (!force_query && m_last_widgets_query_tick != 0 &&
-        now - m_last_widgets_query_tick < WIDGETS_QUERY_INTERVAL_MS)
-    {
-        return false;
-    }
-
-    m_last_widgets_query_tick = now;
-    CRect widgets_rect;
-    if (GetWidgetsButtonRect(widgets_rect))
-    {
-        const bool changed = !IsSameRect(widgets_rect, m_rcWidgets);
-        m_rcWidgets = widgets_rect;
-        m_last_widgets_success_tick = now;
-        return changed;
-    }
-
-    if (!m_rcWidgets.IsRectEmpty() && m_last_widgets_success_tick != 0 &&
-        now - m_last_widgets_success_tick >= WIDGETS_MISS_GRACE_MS)
-    {
-        m_rcWidgets.SetRectEmpty();
-        return true;
-    }
-    return false;
-}
-
-bool CWin11TaskbarDlg::GetWidgetsButtonRect(CRect& rect)
-{
-    rect.SetRectEmpty();
-    if (!::IsWindow(m_hTaskbar))
-        return false;
-
-    const HRESULT init_result = ::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-    IUIAutomation* automation{};
-    const HRESULT create_result = ::CoCreateInstance(
-        CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&automation));
-    if (FAILED(create_result) || automation == nullptr)
-    {
-        if (SUCCEEDED(init_result))
-            ::CoUninitialize();
-        return false;
-    }
-
-    bool found = false;
-    IUIAutomationElement* taskbar_element{};
-    if (SUCCEEDED(automation->ElementFromHandle(m_hTaskbar, &taskbar_element)) && taskbar_element != nullptr)
-    {
-        VARIANT automation_id;
-        ::VariantInit(&automation_id);
-        automation_id.vt = VT_BSTR;
-        automation_id.bstrVal = ::SysAllocString(L"WidgetsButton");
-
-        if (automation_id.bstrVal != nullptr)
-        {
-            IUIAutomationCondition* condition{};
-            if (SUCCEEDED(automation->CreatePropertyCondition(
-                    UIA_AutomationIdPropertyId, automation_id, &condition)) && condition != nullptr)
-            {
-                IUIAutomationElement* widgets_button{};
-                if (SUCCEEDED(taskbar_element->FindFirst(TreeScope_Descendants, condition, &widgets_button)) &&
-                    widgets_button != nullptr)
-                {
-                    RECT widgets_rect{};
-                    if (SUCCEEDED(widgets_button->get_CurrentBoundingRectangle(&widgets_rect)) &&
-                        widgets_rect.right > widgets_rect.left && widgets_rect.bottom > widgets_rect.top)
-                    {
-                        rect = widgets_rect;
-                        rect.OffsetRect(-m_rcTaskbar.left, -m_rcTaskbar.top);
-                        found = true;
-                    }
-                    widgets_button->Release();
-                }
-                condition->Release();
-            }
-            ::VariantClear(&automation_id);
-        }
-        taskbar_element->Release();
-    }
-
-    automation->Release();
-    if (SUCCEEDED(init_result))
-        ::CoUninitialize();
-    return found;
-}
-
-HWND CWin11TaskbarDlg::GetParentHwnd()
-{
-    return m_hTaskbar;
+    m_last_notify_rect.SetRectEmpty();
+    m_last_start_rect.SetRectEmpty();
 }
 
 void CWin11TaskbarDlg::CheckTaskbarOnTopOrBottom()

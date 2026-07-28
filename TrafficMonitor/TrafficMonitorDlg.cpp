@@ -575,11 +575,12 @@ void CTrafficMonitorDlg::CloseTaskBarWnd()
 
 void CTrafficMonitorDlg::OpenTaskBarWnd()
 {
-    // 强制初始化theApp.m_is_windows11_taskbar的值
+    // Keep the shell-style probe for appearance settings, but never let a
+    // transiently incomplete Explorer restart select the legacy lifecycle.
     theApp.CheckWindows11Taskbar();
     if (theApp.m_win_version.IsWine())
         m_tBarDlg = new CWineTaskbarDlg();
-    else if (theApp.IsWindows11Taskbar())
+    else if (theApp.m_win_version.IsWindows11OrLater())
         m_tBarDlg = new CWin11TaskbarDlg();
     else
         m_tBarDlg = new CClassicalTaskbarDlg();
@@ -601,7 +602,6 @@ void CTrafficMonitorDlg::OpenTaskBarWnd()
         m_tBarDlg->Create(IDD_TASK_BAR_DIALOG, this);
         break;
     }
-    m_tBarDlg->ShowWindow(SW_SHOWNOACTIVATE);
     m_tBarDlg->AdjustWindowPos(true);
     //m_tBarDlg->ShowInfo();
     //IniTaskBarConnectionMenu();
@@ -614,48 +614,10 @@ void CTrafficMonitorDlg::AddNotifyIcon()
 
 void CTrafficMonitorDlg::DeleteNotifyIcon()
 {
-    ::Shell_NotifyIcon(NIM_DELETE, &m_ntIcon);
 }
 
 void CTrafficMonitorDlg::ShowNotifyTip(const wchar_t*, const wchar_t*)
 {
-}
-
-void CTrafficMonitorDlg::UpdateNotifyIconTip()
-{
-    CString strTip;         //鼠标指向图标时显示的提示
-#ifdef _DEBUG
-    strTip = CCommon::LoadText(IDS_TRAFFICMONITOR, _T(" (Debug)"));
-#else
-    strTip = CCommon::LoadText(IDS_TRAFFICMONITOR);
-#endif
-
-    CString in_speed = CCommon::DataSizeToString(theApp.m_in_speed);
-    CString out_speed = CCommon::DataSizeToString(theApp.m_out_speed);
-
-    strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%>/s"), { CCommon::LoadText(IDS_UPLOAD), out_speed });
-    strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%>/s"), { CCommon::LoadText(IDS_DOWNLOAD), in_speed });
-    strTip += CCommon::StringFormat(_T("\r\nCPU: <%1%> %"), { theApp.m_cpu_usage });
-    strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> %"), { CCommon::LoadText(IDS_MEMORY), theApp.m_memory_usage });
-    if (IsTemperatureNeeded())
-    {
-        if (theApp.m_general_data.IsHardwareEnable(HI_GPU) && theApp.m_gpu_usage >= 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> %"), { CCommon::LoadText(IDS_GPU_USAGE), theApp.m_gpu_usage });
-        if (theApp.m_general_data.IsHardwareEnable(HI_CPU) && theApp.m_cpu_temperature > 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> °C"), { CCommon::LoadText(IDS_CPU_TEMPERATURE), static_cast<int>(theApp.m_cpu_temperature) });
-        if (theApp.m_general_data.IsHardwareEnable(HI_GPU) && theApp.m_gpu_temperature > 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> °C"), { CCommon::LoadText(IDS_GPU_TEMPERATURE), static_cast<int>(theApp.m_gpu_temperature) });
-        if (theApp.m_general_data.IsHardwareEnable(HI_HDD) && theApp.m_hdd_temperature > 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> °C"), { CCommon::LoadText(IDS_HDD_TEMPERATURE), static_cast<int>(theApp.m_hdd_temperature) });
-        if (theApp.m_general_data.IsHardwareEnable(HI_MBD) && theApp.m_main_board_temperature > 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> °C"), { CCommon::LoadText(IDS_MAINBOARD_TEMPERATURE), static_cast<int>(theApp.m_main_board_temperature) });
-        if (theApp.m_general_data.IsHardwareEnable(HI_HDD) && theApp.m_hdd_usage >= 0)
-            strTip += CCommon::StringFormat(_T("\r\n<%1%>: <%2%> %"), { CCommon::LoadText(IDS_HDD_USAGE), theApp.m_hdd_usage });
-    }
-
-    CCommon::WStringCopy(m_ntIcon.szTip, 128, strTip);
-    ::Shell_NotifyIcon(NIM_MODIFY, &m_ntIcon);
-
 }
 
 void CTrafficMonitorDlg::_OnOptions(int, CWnd* pParent)
@@ -912,9 +874,6 @@ BOOL CTrafficMonitorDlg::OnInitDialog()
     CCommon::WStringCopy(m_ntIcon.szTip, 128, atip.GetString());
     m_ntIcon.uCallbackMessage = MY_WM_NOTIFYICON;   //应用程序定义的消息ID号
     m_ntIcon.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP; //图标的属性：设置成员uCallbackMessage、hIcon、szTip有效
-    if (theApp.m_general_data.show_notify_icon)
-        ::Shell_NotifyIcon(NIM_ADD, &m_ntIcon); //在系统通知区域增加这个图标
-
     //设置1000毫秒触发的定时器
     SetTimer(MAIN_TIMER, 1000, NULL);
 
@@ -1780,9 +1739,6 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
             erro_log_write = false;
         }
 
-        UpdateNotifyIconTip();
-
-
     }
 
     if (nIDEvent == DELAY_TIMER)
@@ -2263,8 +2219,7 @@ void CTrafficMonitorDlg::OnDestroy()
 {
     CDialog::OnDestroy();
 
-    //程序退出时删除通知栏图标
-    ::Shell_NotifyIcon(NIM_DELETE, &m_ntIcon);
+    DeleteNotifyIcon();
 
     // 停止监控线程
     ExitMonitorThread();
@@ -2369,9 +2324,9 @@ void CTrafficMonitorDlg::OnAppAbout()
 //当资源管理器重启时会触发此消息
 LRESULT CTrafficMonitorDlg::OnTaskBarCreated(WPARAM wParam, LPARAM lParam)
 {
-    theApp.EnforceTaskbarOnlyMode();
-    CloseTaskBarWnd();
-    OpenTaskBarWnd();
+    // Explorer broadcasts TaskbarCreated synchronously. Return immediately so
+    // its shell thread never waits for our window reconstruction.
+    PostMessage(WM_REOPEN_TASKBAR_WND);
     return LRESULT();
 }
 

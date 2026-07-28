@@ -96,7 +96,7 @@ using std::ofstream;
 #define APP_NAME _T("Performance Monitor")
 #define TASKBAR_WINDOW_NAME _T("PerformanceMonitorTaskbarWindow")
 #define APP_CLASS_NAME _T("TrafficMonitor_r7XZaS4p") //程序主窗口的类名
-#define VERSION L"1.4.0"
+#define VERSION L"1.4.2"
 #define COPYRITE_YEAR L"2017-2026"
 
 #define MAX_NOTIFY_ICON 6       //可选的通知区图标数量

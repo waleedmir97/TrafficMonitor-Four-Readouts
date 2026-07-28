@@ -9,6 +9,4 @@ private:
     void AdjustTaskbarWndPos(bool force_adjust) override;
     void ResetTaskbarPos() override;
     void CheckTaskbarOnTopOrBottom() override;
-    HWND GetParentHwnd() override;
 };
-

@@ -169,7 +169,6 @@ protected:
 public:
     void ShowNotifyTip(const wchar_t* title, const wchar_t* message);       //显示通知区提示
 protected:
-    void UpdateNotifyIconTip();     //更新通知区图标的鼠标提示
 
     void _OnOptions(int tab, CWnd* pParent);   //打开“选项”对话框的处理，tab：打开时切换的标签
 

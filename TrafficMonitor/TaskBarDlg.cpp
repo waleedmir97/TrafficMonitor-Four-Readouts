@@ -10,7 +10,6 @@
 #include "WIC.h"
 #include "Nullable.hpp"
 #include "DrawCommonFactory.h"
-#include "WindowsWebExperienceDetector.h"
 #include "TaskbarHelper.h"
 
 #ifdef DEBUG
@@ -547,7 +546,7 @@ void CTaskBarDlg::MoveWindow(CRect rect)
     if (!IsWindow(GetSafeHwnd()))
         return;
 
-    if (m_overlay_fallback_active)
+    if (m_taskbar_overlay_active)
     {
         rect.MoveToXY(rect.left + m_rcTaskbar.left, rect.top + m_rcTaskbar.top);
         ::SetWindowPos(GetSafeHwnd(), nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
@@ -604,8 +603,18 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
         }
         m_hTaskbar = taskbar;
         m_is_secondary_display = is_secondary_display;
-        AttachToTaskbarHost();
+        if (!ConfigureTaskbarOverlay())
+        {
+            ShowWindow(SW_HIDE);
+            return false;
+        }
         force_adjust = true;
+    }
+
+    if (!m_taskbar_overlay_active && !ConfigureTaskbarOverlay())
+    {
+        ShowWindow(SW_HIDE);
+        return false;
     }
 
     if (!::GetWindowRect(m_hTaskbar, m_rcTaskbar))
@@ -631,11 +640,6 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
 
     AdjustTaskbarWndPos(force_adjust);
     UpdateOverlayVisibility();
-    if (!m_overlay_fallback_active && !m_connot_insert_to_task_bar &&
-        !::IsWindowVisible(m_hWnd) && ::IsWindowVisible(m_hTaskbar))
-    {
-        ShowWindow(SW_SHOWNOACTIVATE);
-    }
     m_is_width_changed = false;
     return true;
 }
@@ -770,9 +774,9 @@ HWND CTaskBarDlg::FindTaskbarHandle(bool& is_scendary_display)
     return hTaskbar;
 }
 
-bool CTaskBarDlg::AttachToTaskbarHost()
+bool CTaskBarDlg::ConfigureTaskbarOverlay()
 {
-    m_overlay_fallback_active = false;
+    m_taskbar_overlay_active = false;
     m_connot_insert_to_task_bar = false;
     m_error_code = ERROR_SUCCESS;
 
@@ -784,50 +788,31 @@ bool CTaskBarDlg::AttachToTaskbarHost()
     }
 
     InitTaskbarWnd();
-    HWND parent = GetParentHwnd();
-    if (!::IsWindow(parent))
-    {
-        m_connot_insert_to_task_bar = true;
-        m_error_code = ERROR_INVALID_WINDOW_HANDLE;
-        return false;
-    }
 
-    const LONG_PTR original_style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
-    const HWND original_owner = ::GetWindow(m_hWnd, GW_OWNER);
-
-    // SetParent does not update WS_POPUP/WS_CHILD. Make the relationship real
-    // before validating it so Explorer controls clipping and full-screen Z order.
-    ::SetWindowLongPtr(m_hWnd, GWL_STYLE, (original_style & ~WS_POPUP) | WS_CHILD);
+    // Keep the readout in our process as a top-level popup. Parenting it to
+    // Explorer creates a synchronous cross-process window relationship that
+    // can deadlock the taskbar when either UI thread is busy.
+    const LONG_PTR style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
+    ::SetWindowLongPtr(m_hWnd, GWL_STYLE, (style & ~WS_CHILD) | WS_POPUP);
+    ModifyStyleEx(WS_EX_APPWINDOW, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
     ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
-    ::SetLastError(ERROR_SUCCESS);
-    HWND previous_parent = ::SetParent(m_hWnd, parent);
-    const DWORD set_parent_error = ::GetLastError();
-    const bool set_parent_failed = previous_parent == nullptr && set_parent_error != ERROR_SUCCESS;
-    m_connot_insert_to_task_bar = set_parent_failed || ::GetParent(m_hWnd) != parent;
-    if (m_connot_insert_to_task_bar)
+    const LONG_PTR applied_style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
+    if ((applied_style & WS_CHILD) != 0 || (applied_style & WS_POPUP) == 0)
     {
-        m_error_code = set_parent_failed ? set_parent_error : ERROR_INVALID_WINDOW_HANDLE;
-        ::SetParent(m_hWnd, nullptr);
-        ::SetWindowLongPtr(m_hWnd, GWL_STYLE, original_style);
-        if (::IsWindow(original_owner))
-            ::SetWindowLongPtr(m_hWnd, GWLP_HWNDPARENT, reinterpret_cast<LONG_PTR>(original_owner));
-        ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
-        ModifyStyleEx(0, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
-        m_overlay_fallback_active = true;
+        m_connot_insert_to_task_bar = true;
+        m_error_code = ERROR_INVALID_WINDOW_STYLE;
         return false;
     }
 
-    ::SetWindowPos(m_hWnd, HWND_NOTOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    m_taskbar_overlay_active = true;
     return true;
 }
 
 bool CTaskBarDlg::ShouldShowOverlay() const
 {
-    if (!m_overlay_fallback_active || !::IsWindow(m_hWnd) ||
+    if (!m_taskbar_overlay_active || !::IsWindow(m_hWnd) ||
         !::IsWindow(m_hTaskbar) || !::IsWindowVisible(m_hTaskbar))
     {
         return false;
@@ -852,7 +837,7 @@ bool CTaskBarDlg::ShouldShowOverlay() const
 
 void CTaskBarDlg::UpdateOverlayVisibility()
 {
-    if (!m_overlay_fallback_active || !::IsWindow(m_hWnd))
+    if (!m_taskbar_overlay_active || !::IsWindow(m_hWnd))
         return;
 
     if (ShouldShowOverlay())
@@ -1154,9 +1139,6 @@ BOOL CTaskBarDlg::OnInitDialog()
 
     // TODO:  在此添加额外的初始化
     SetWindowText(TASKBAR_WINDOW_NAME);
-    // 检测系统是否安装了 MicrosoftWindows.Client.WebExperience (aka Windows Web Experience Pack)
-    theApp.m_taskbar_data.is_windows_web_experience_detected =
-        WindowsWebExperienceDetector::IsDetected();
     // 根据任务栏窗口的设置禁用必要的渲染选项，仅透明且支持D2D渲染时才会使用D2D渲染
     DisableRenderFeatureIfNecessary(m_supported_render_enums);
     // Keep the readout out of Alt+Tab and avoid taking focus in the fallback path.
@@ -1175,7 +1157,7 @@ BOOL CTaskBarDlg::OnInitDialog()
 
     ApplyWindowTransparentColor();
     if (::IsWindow(m_hTaskbar))
-        AttachToTaskbarHost();
+        ConfigureTaskbarOverlay();
 
     //根据已经确定的任务栏最小化窗口区域得到屏幕并获得所在屏幕的DPI（Windows 8.1及其以上）
     if (theApp.m_win_version.IsWindows8Point1OrLater())
