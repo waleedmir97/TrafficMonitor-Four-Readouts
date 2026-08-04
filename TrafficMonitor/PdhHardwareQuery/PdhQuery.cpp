@@ -1,5 +1,7 @@
-#include "stdafx.h"
+ï»¿#include "stdafx.h"
 #include "PdhQuery.h"
+#include <cmath>
+#include <cstddef>
 
 CPdhQuery::CPdhQuery(LPCTSTR _fullCounterPath)
     : fullCounterPath(_fullCounterPath)
@@ -9,7 +11,7 @@ CPdhQuery::CPdhQuery(LPCTSTR _fullCounterPath)
 
 CPdhQuery::~CPdhQuery()
 {
-    //¹Ø±Õ²éÑ¯
+    //å…³é—­æŸ¥è¯¢
     PdhCloseQuery(query);
 }
 
@@ -19,14 +21,14 @@ bool CPdhQuery::Initialize()
         return true;
 
     PDH_STATUS status;
-    //´ò¿ª²éÑ¯
+    //æ‰“å¼€æŸ¥è¯¢
     status = PdhOpenQuery(NULL, NULL, &query);
     if (status != ERROR_SUCCESS)
         return false;
 
-    //Ìí¼Ó¼ÆÊıÆ÷
+    //æ·»åŠ è®¡æ•°å™¨
     status = PdhAddCounter(query, fullCounterPath.GetString(), NULL, &counter);
-    //ÏÈµ÷ÓÃPdhAddCounter£¬Èç¹ûÊ§°ÜÊ¹ÓÃPdhAddEnglishCounterÔÙÊÔÒ»´Î
+    //å…ˆè°ƒç”¨PdhAddCounterï¼Œå¦‚æœå¤±è´¥ä½¿ç”¨PdhAddEnglishCounterå†è¯•ä¸€æ¬¡
     if (status != ERROR_SUCCESS)
     {
         status = PdhAddEnglishCounter(query, fullCounterPath.GetString(), NULL, &counter);
@@ -38,7 +40,7 @@ bool CPdhQuery::Initialize()
         }
     }
 
-    //³õÊ¼»¯¼ÆÊıÆ÷
+    //åˆå§‹åŒ–è®¡æ•°å™¨
     PdhCollectQueryData(query);
     isInitialized = true;
     return true;
@@ -49,7 +51,7 @@ bool CPdhQuery::QueryValue(double& value)
     if (!isInitialized)
         return false;
 
-    //¸üĞÂÊı¾İ
+    //æ›´æ–°æ•°æ®
     PdhCollectQueryData(query);
     PDH_FMT_COUNTERVALUE pdhValue;
     DWORD dwValue;
@@ -68,47 +70,60 @@ bool CPdhQuery::QueryValues(std::vector<CounterValueItem>& values)
     if (!isInitialized)
         return false;
 
-    //¸üĞÂÊı¾İ
-    PdhCollectQueryData(query);
-    DWORD dwBufferSize = 0;         // Size of the pItems buffer
-    DWORD dwItemCount = 0;          // Number of items in the pItems buffer
-    PDH_FMT_COUNTERVALUE_ITEM* pItems = NULL;
-    PDH_STATUS status = PdhGetFormattedCounterArray(counter, PDH_FMT_DOUBLE, &dwBufferSize, &dwItemCount, pItems);
-    if (PDH_MORE_DATA == status)
-    {
-        pItems = (PDH_FMT_COUNTERVALUE_ITEM*)malloc(dwBufferSize);
-        if (pItems)
-        {
-            status = PdhGetFormattedCounterArray(counter, PDH_FMT_DOUBLE, &dwBufferSize, &dwItemCount, pItems);
-            if (ERROR_SUCCESS == status)
-            {
-                // Loop through the array and print the instance name and counter value.
-                for (DWORD i = 0; i < dwItemCount; i++)
-                {
-                    CounterValueItem value_item;
-                    value_item.name = pItems[i].szName;
-                    value_item.value = pItems[i].FmtValue.doubleValue;
-                    values.push_back(value_item);
-                }
-            }
-            else
-            {
-                return false;
-            }
-
-            free(pItems);
-            pItems = NULL;
-            dwBufferSize = dwItemCount = 0;
-        }
-        else
-        {
-            return false;
-        }
-    }
-    else
-    {
+    // Refresh the wildcard counter, then size and fetch its current instance
+    // array. Instances can change between the two PDH calls during dock/hotplug,
+    // so retry a bounded number of times with RAII-backed storage.
+    if (PdhCollectQueryData(query) != ERROR_SUCCESS)
         return false;
-    }
 
-    return true;
+    DWORD buffer_size = 0;
+    DWORD item_count = 0;
+    PDH_STATUS status =
+        PdhGetFormattedCounterArray(counter, PDH_FMT_DOUBLE, &buffer_size, &item_count, nullptr);
+    if (status != PDH_MORE_DATA || buffer_size == 0)
+        return false;
+
+    constexpr int max_resize_attempts = 3;
+    constexpr DWORD max_counter_buffer_size = 16u * 1024u * 1024u;
+    for (int attempt = 0; attempt < max_resize_attempts; ++attempt)
+    {
+        if (buffer_size > max_counter_buffer_size)
+            return false;
+
+        const size_t aligned_count =
+            (buffer_size + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t);
+        std::vector<std::max_align_t> storage(aligned_count);
+        auto* items = reinterpret_cast<PDH_FMT_COUNTERVALUE_ITEM*>(storage.data());
+
+        DWORD supplied_size = buffer_size;
+        item_count = 0;
+        status = PdhGetFormattedCounterArray(
+            counter, PDH_FMT_DOUBLE, &supplied_size, &item_count, items);
+        if (status == PDH_MORE_DATA)
+        {
+            buffer_size = supplied_size;
+            continue;
+        }
+        if (status != ERROR_SUCCESS)
+            return false;
+
+        for (DWORD index = 0; index < item_count; ++index)
+        {
+            const auto& formatted_value = items[index].FmtValue;
+            if (formatted_value.CStatus != PDH_CSTATUS_VALID_DATA &&
+                formatted_value.CStatus != PDH_CSTATUS_NEW_DATA)
+            {
+                continue;
+            }
+            if (!std::isfinite(formatted_value.doubleValue) || items[index].szName == nullptr)
+                continue;
+
+            CounterValueItem value_item;
+            value_item.name = items[index].szName;
+            value_item.value = formatted_value.doubleValue;
+            values.push_back(value_item);
+        }
+        return !values.empty();
+    }
+    return false;
 }

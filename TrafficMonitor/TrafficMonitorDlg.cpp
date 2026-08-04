@@ -23,8 +23,6 @@
 #define new DEBUG_NEW
 #endif
 
-
-
 // CTrafficMonitorDlg 对话框
 
 //静态成员初始化
@@ -1159,10 +1157,15 @@ void CTrafficMonitorDlg::DoMonitorAcquisition()
 #endif
 
 #ifdef WITHOUT_TEMPERATURE
-    // The taskbar-only build samples only values that it displays.
+    // The taskbar-only build samples only values that it displays. Disk load
+    // is the aggregate active-time percentage across all physical disks.
     theApp.m_cpu_usage = m_cpu_usage_helper.GetCpuUsage();
     if (!m_gpu_usage_helper.GetGpuUsage(theApp.m_gpu_usage))
         theApp.m_gpu_usage = -1;
+    m_get_disk_usage_by_pdh =
+        m_disk_usage_helper.GetDiskUsage(L"_Total", theApp.m_hdd_usage);
+    if (!m_get_disk_usage_by_pdh)
+        theApp.m_hdd_usage = -1;
 #else
     bool cpu_usage_acquired = false;
     bool cpu_freq_acquired = false;
@@ -1782,7 +1785,9 @@ void CTrafficMonitorDlg::OnTimer(UINT_PTR nIDEvent)
                                                                 //设置DPI并刷新窗口
                                                                 p_TaskBarDlg->SetDPI(new_dpi_x);
                                                                 p_TaskBarDlg->SetTextFont();
-                                                                p_TaskBarDlg->CalculateWindowSize(); });
+                                                                p_TaskBarDlg->CalculateWindowSize();
+                                                                p_TaskBarDlg->WidthChanged();
+                                                                p_TaskBarDlg->Invalidate(FALSE); });
             }
 
             m_tBarDlg->AdjustWindowPos();
@@ -1954,7 +1959,9 @@ void CTrafficMonitorDlg::OnClose()
     theApp.SaveGlobalConfig();
 
     if (IsTaskbarWndValid())
+    {
         m_tBarDlg->OnCancel();
+    }
 
     //确保在退出前关闭所有窗口
     for (const auto& item : CBaseDialog::AllUniqueHandels())
@@ -2224,7 +2231,6 @@ void CTrafficMonitorDlg::OnDestroy()
     // 停止监控线程
     ExitMonitorThread();
 }
-
 
 void CTrafficMonitorDlg::OnShowCpuMemory()
 {

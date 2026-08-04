@@ -73,6 +73,7 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_general_data.cpu_usage_acquire_method = GeneralSettingData::CA_PDH;
     m_general_data.hardware_monitor_item = 0;
     m_general_data.monitor_time_span = 1000;
+    m_general_data.hard_disk_name = L"_Total";
 
     m_cfg_data.m_show_task_bar_wnd = true;
     m_cfg_data.m_hide_main_window = true;
@@ -86,8 +87,12 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_main_wnd_data.double_click_action = DoubleClickAction::NONE;
     m_debug_log = false;
 
-    m_taskbar_data.display_item = DisplayItemSet{ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY };
+    m_taskbar_data.display_item = DisplayItemSet{
+        TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY, TDI_HDD_USAGE
+    };
     m_taskbar_data.plugin_display_item.data().clear();
+    // In the lite build, NormalizeItemOrder appends HDD usage immediately after
+    // these five explicitly ordered built-ins, making it the sixth grid cell.
     m_taskbar_data.item_order.SetOrder({ TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY });
     m_taskbar_data.show_taskbar_wnd_in_secondary_display = false;
     m_taskbar_data.secondary_display_index = 0;
@@ -102,9 +107,10 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_taskbar_data.disp_str.Get(TDI_CPU) = L"CPU: ";
     m_taskbar_data.disp_str.Get(TDI_GPU_USAGE) = L"GPU: ";
     m_taskbar_data.disp_str.Get(TDI_MEMORY) = L"RAM: ";
+    m_taskbar_data.disp_str.Get(TDI_HDD_USAGE) = L"DISK: ";
     m_taskbar_data.specify_each_item_color = true;
     const COLORREF text_color = CWindowsSettingHelper::IsWindows10LightTheme() ? RGB(0, 0, 0) : RGB(255, 255, 255);
-    for (const auto item : { TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY })
+    for (const auto item : { TDI_UP, TDI_DOWN, TDI_CPU, TDI_GPU_USAGE, TDI_MEMORY, TDI_HDD_USAGE })
         m_taskbar_data.text_colors[item] = TaskbarItemColor{ text_color, text_color };
     m_taskbar_data.back_color = TASKBAR_TRANSPARENT_COLOR1;
     m_taskbar_data.transparent_color = TASKBAR_TRANSPARENT_COLOR1;
@@ -127,13 +133,14 @@ void CTrafficMonitorApp::EnforceTaskbarOnlyMode()
     m_taskbar_data.separate_value_unit_with_space = true;
     m_taskbar_data.show_tool_tip = false;
     m_taskbar_data.digits_number = 4;
-    m_taskbar_data.tbar_wnd_on_left = false;
-    m_taskbar_data.tbar_wnd_snap = false;
+    m_taskbar_data.tbar_wnd_on_left = true;
+    m_taskbar_data.tbar_wnd_snap = true;
     m_taskbar_data.item_space = 8;
     m_taskbar_data.vertical_margin = 0;
     m_taskbar_data.window_offset_top = 0;
     m_taskbar_data.window_offset_left = 0;
-    m_taskbar_data.avoid_overlap_with_widgets = false;
+    m_taskbar_data.avoid_overlap_with_widgets = true;
+    m_taskbar_data.taskbar_left_space_win11 = 160;
     m_taskbar_data.disable_d2d = true;
     m_taskbar_data.enable_colorful_emoji = false;
     m_taskbar_data.double_click_action = DoubleClickAction::NONE;
@@ -152,6 +159,7 @@ void CTrafficMonitorApp::PublishPerformanceSnapshot()
     m_performance_snapshot.used_memory = m_used_memory;
     m_performance_snapshot.total_memory = m_total_memory;
     m_performance_snapshot.gpu_usage = m_gpu_usage;
+    m_performance_snapshot.disk_usage = m_hdd_usage;
 }
 
 PerformanceSnapshot CTrafficMonitorApp::GetPerformanceSnapshot() const
@@ -394,7 +402,7 @@ void CTrafficMonitorApp::LoadConfig()
 
 void CTrafficMonitorApp::SaveConfig()
 {
-    // The fixed five-readout build has no user-facing display settings to persist.
+    // The fixed six-readout build has no user-facing display settings to persist.
     return;
 
 #if 0

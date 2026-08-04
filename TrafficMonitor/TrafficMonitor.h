@@ -34,6 +34,7 @@ struct PerformanceSnapshot
     int used_memory{};
     int total_memory{};
     int gpu_usage{ -1 };
+    int disk_usage{ -1 };
 };
 
 // CTrafficMonitorApp:

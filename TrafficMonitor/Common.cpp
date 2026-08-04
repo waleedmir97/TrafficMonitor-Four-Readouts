@@ -1,7 +1,102 @@
 ﻿#include "stdafx.h"
 #include "Common.h"
 #include "TrafficMonitor.h"
+#include <dwmapi.h>
 
+#pragma comment(lib, "dwmapi.lib")
+
+namespace
+{
+    bool TryGetWindowProcessName(HWND window, CString& process_name)
+    {
+        DWORD process_id{};
+        if (::GetWindowThreadProcessId(window, &process_id) == 0 || process_id == 0)
+            return false;
+
+        HANDLE process = ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+        if (process == nullptr)
+            return false;
+
+        wchar_t image_path[32768]{};
+        DWORD image_path_length = static_cast<DWORD>(_countof(image_path));
+        const BOOL query_succeeded =
+            ::QueryFullProcessImageNameW(process, 0, image_path, &image_path_length);
+        ::CloseHandle(process);
+        if (!query_succeeded || image_path_length == 0)
+            return false;
+
+        const wchar_t* file_name = wcsrchr(image_path, L'\\');
+        process_name = file_name == nullptr ? image_path : file_name + 1;
+        return !process_name.IsEmpty();
+    }
+
+    bool IsWindowsShellSurface(HWND window, const CString& class_name)
+    {
+        CString process_name;
+        if (!TryGetWindowProcessName(window, process_name))
+            return false;
+
+        // These Windows shell hosts use monitor-sized transparent root windows
+        // for flyouts such as Search, Start, Widgets, and text input. Their
+        // outer and client rectangles are not evidence of a fullscreen app.
+        static const wchar_t* shell_surface_processes[] =
+        {
+            L"SearchHost.exe",
+            L"SearchApp.exe",
+            L"SearchUI.exe",
+            L"StartMenuExperienceHost.exe",
+            L"ShellExperienceHost.exe",
+            L"TextInputHost.exe",
+            L"ShellHost.exe",
+            L"Widgets.exe",
+            L"WidgetService.exe"
+        };
+        for (const wchar_t* shell_process : shell_surface_processes)
+        {
+            if (process_name.CompareNoCase(shell_process) == 0)
+                return true;
+        }
+
+        // These dedicated Windows capture hosts temporarily own monitor-sized
+        // screenshot/recording selection surfaces. Those surfaces are capture
+        // UI, not fullscreen content. Keep the exclusion to their exact current
+        // and legacy executable names so unrelated apps remain eligible.
+        static const wchar_t* capture_surface_processes[] =
+        {
+            L"SnippingTool.exe",
+            L"ScreenClippingHost.exe"
+        };
+        for (const wchar_t* capture_process : capture_surface_processes)
+        {
+            if (process_name.CompareNoCase(capture_process) == 0)
+                return true;
+        }
+
+        if (process_name.CompareNoCase(L"explorer.exe") != 0)
+            return false;
+
+        // Restrict Explorer exclusions to its shell surfaces. A fullscreen
+        // File Explorer window uses CabinetWClass and must still be detected.
+        static const wchar_t* explorer_shell_classes[] =
+        {
+            L"Shell_TrayWnd",
+            L"Shell_SecondaryTrayWnd",
+            L"Progman",
+            L"WorkerW",
+            L"ForegroundStaging",
+            L"XamlExplorerHostIslandWindow",
+            L"Windows.UI.Composition.DesktopWindowContentBridge",
+            L"TabletModeCoverWindow",
+            L"ApplicationManager_DesktopShellWindow"
+        };
+        for (const wchar_t* shell_class : explorer_shell_classes)
+        {
+            if (class_name.CompareNoCase(shell_class) == 0)
+                return true;
+        }
+        return false;
+    }
+}
 
 CCommon::CCommon()
 {
@@ -736,33 +831,72 @@ void CCommon::DrawWindowText(CDC* pDC, CRect rect, LPCTSTR lpszString, COLORREF 
 bool CCommon::IsForegroundFullscreen(HMONITOR hMonitor)
 {
     if (hMonitor == NULL)
-        hMonitor = MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY);
-    bool bFullscreen{ false };      //用于指示前台窗口是否是全屏
-    HWND hWnd{};
-    RECT rcApp{};
+        hMonitor = ::MonitorFromWindow(NULL, MONITOR_DEFAULTTOPRIMARY);
+    if (hMonitor == NULL)
+        return false;
 
     // 获取显示器信息
-    MONITORINFOEX monitorInfo{};
-    monitorInfo.cbSize = sizeof(monitorInfo);
-    GetMonitorInfo(hMonitor, &monitorInfo);
-    RECT monitorRect = monitorInfo.rcMonitor;
+    MONITORINFO monitor_info{ sizeof(monitor_info) };
+    if (!::GetMonitorInfo(hMonitor, &monitor_info))
+        return false;
 
-    hWnd = GetForegroundWindow();   //获取当前正在与用户交互的前台窗口句柄
-    TCHAR buff[256];
-    GetClassName(hWnd, buff, 256);      //获取前台窗口的类名
-    CString class_name{ buff };
-    if (hWnd != GetDesktopWindow() && class_name != _T("WorkerW") && hWnd != GetShellWindow())//如果前台窗口不是桌面窗口，也不是控制台窗口
+    HWND foreground = ::GetForegroundWindow();   //获取当前正在与用户交互的前台窗口句柄
+    if (foreground == nullptr)
+        return false;
+
+    HWND root_window = ::GetAncestor(foreground, GA_ROOT);
+    if (root_window != nullptr)
+        foreground = root_window;
+
+    if (foreground == ::GetDesktopWindow() || foreground == ::GetShellWindow() ||
+        !::IsWindow(foreground) || !::IsWindowVisible(foreground) ||
+        ::IsIconic(foreground))
     {
-        GetWindowRect(hWnd, &rcApp);    //获取前台窗口的坐标
-        if (rcApp.left <= monitorRect.left && //如果前台窗口的坐标完全覆盖住桌面窗口，就表示前台窗口是全屏的
-            rcApp.top <= monitorRect.top &&
-            rcApp.right >= monitorRect.right &&
-            rcApp.bottom >= monitorRect.bottom)
-        {
-            bFullscreen = true;
-        }
-    }//如果前台窗口是桌面窗口，或者是控制台窗口，就直接返回不是全屏
-    return bFullscreen;
+        return false;
+    }
+
+    DWORD cloaked{};
+    if (SUCCEEDED(::DwmGetWindowAttribute(
+        foreground, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked != 0)
+    {
+        return false;
+    }
+
+    wchar_t class_buffer[256]{};
+    if (::GetClassNameW(foreground, class_buffer, _countof(class_buffer)) == 0)
+        return false;
+    CString class_name{ class_buffer };
+    if (class_name.CompareNoCase(L"WorkerW") == 0)
+        return false;
+
+    // GetWindowRect includes invisible resize borders. A normal maximized
+    // window can therefore appear to cover a monitor even though its client
+    // area stops at the taskbar. Genuine fullscreen content covers the monitor
+    // with its client area, so classify using client coordinates instead.
+    RECT client_rect{};
+    if (!::GetClientRect(foreground, &client_rect) || ::IsRectEmpty(&client_rect))
+        return false;
+    POINT client_top_left{ client_rect.left, client_rect.top };
+    POINT client_bottom_right{ client_rect.right, client_rect.bottom };
+    if (!::ClientToScreen(foreground, &client_top_left) ||
+        !::ClientToScreen(foreground, &client_bottom_right))
+    {
+        return false;
+    }
+
+    constexpr LONG edge_tolerance = 2;
+    const RECT& monitor_rect = monitor_info.rcMonitor;
+    const bool client_covers_monitor =
+        client_top_left.x <= monitor_rect.left + edge_tolerance &&
+        client_top_left.y <= monitor_rect.top + edge_tolerance &&
+        client_bottom_right.x >= monitor_rect.right - edge_tolerance &&
+        client_bottom_right.y >= monitor_rect.bottom - edge_tolerance;
+    if (!client_covers_monitor)
+        return false;
+
+    // Resolve the process only for a monitor-covering candidate. This keeps the
+    // normal 100 ms policy check entirely local and cheap for ordinary windows.
+    return !IsWindowsShellSurface(foreground, class_name);
 }
 
 bool CCommon::CopyStringToClipboard(const wstring& str)

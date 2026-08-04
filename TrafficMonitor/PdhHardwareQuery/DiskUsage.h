@@ -12,6 +12,10 @@ public:
     // 返回值: true=成功, false=失败（首次调用通常失败，需间隔200ms+重试）
     bool GetDiskUsage(int diskIndex, /*out*/ int& usage);
 
+    // 按PDH实例名称获取利用率。每次查询都重新匹配实例，避免磁盘在
+    // 扩展坞连接/断开后因实例顺序变化而读到错误的磁盘。
+    bool GetDiskUsage(const std::wstring& diskName, /*out*/ int& usage);
+
     // 获取物理磁盘名称列表
     const std::vector<CString>& GetDiskNames() const { return m_diskNames; }
 

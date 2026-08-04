@@ -69,6 +69,30 @@ bool CPdhDiskUsage::GetDiskUsage(int diskIndex, int& usage)
 
 }
 
+bool CPdhDiskUsage::GetDiskUsage(const std::wstring& diskName, int& usage)
+{
+    usage = 0;
+    if (!m_isAvailable)
+        return false;
+
+    std::vector<CounterValueItem> values;
+    if (!QueryValues(values))
+        return false;
+
+    const auto iter = std::find_if(values.begin(), values.end(),
+        [&diskName](const CounterValueItem& item)
+        {
+            return item.name == diskName;
+        });
+    if (iter == values.end())
+        return false;
+    if (!std::isfinite(iter->value))
+        return false;
+
+    usage = CalculateUtilization(iter->value);
+    return true;
+}
+
 int CPdhDiskUsage::FindDiskIndex(const std::wstring diskName)
 {
     int disk_index = -1;

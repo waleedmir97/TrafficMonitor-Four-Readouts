@@ -12,6 +12,34 @@
 #include "DrawCommonFactory.h"
 #include "TaskbarHelper.h"
 
+namespace
+{
+    constexpr wchar_t TASKBAR_COMPOSITION_HOST_CLASS[] =
+        L"Windows.UI.Composition.DesktopWindowContentBridge";
+
+    BOOL CALLBACK FindTaskbarCompositionHostCallback(HWND window, LPARAM context)
+    {
+        wchar_t class_name[256]{};
+        if (::GetClassNameW(window, class_name, _countof(class_name)) != 0 &&
+            wcscmp(class_name, TASKBAR_COMPOSITION_HOST_CLASS) == 0)
+        {
+            *reinterpret_cast<HWND*>(context) = window;
+            return FALSE;
+        }
+        return TRUE;
+    }
+
+    HWND FindTaskbarCompositionHost(HWND taskbar)
+    {
+        HWND host = ::FindWindowEx(taskbar, nullptr,
+            TASKBAR_COMPOSITION_HOST_CLASS, nullptr);
+        if (!::IsWindow(host))
+            ::EnumChildWindows(taskbar, FindTaskbarCompositionHostCallback,
+                reinterpret_cast<LPARAM>(&host));
+        return host;
+    }
+}
+
 #ifdef DEBUG
 // DX调试信息捕获
 #include "dxgi1_3.h"
@@ -318,6 +346,9 @@ void CTaskBarDlg::DrawDisplayItem(IDrawCommon& drawer, DisplayItem type, CRect r
         case TDI_GPU_USAGE:
             figure_value = m_readout_snapshot.gpu_usage;
             break;
+        case TDI_HDD_USAGE:
+            figure_value = m_readout_snapshot.disk_usage;
+            break;
         case TDI_CPU_TEMP:
             figure_value = theApp.m_cpu_temperature;
             break;
@@ -329,9 +360,6 @@ void CTaskBarDlg::DrawDisplayItem(IDrawCommon& drawer, DisplayItem type, CRect r
             break;
         case TDI_MAIN_BOARD_TEMP:
             figure_value = theApp.m_main_board_temperature;
-            break;
-        case TDI_HDD_USAGE:
-            figure_value = theApp.m_hdd_usage;
             break;
         //case TDI_CPU_FREQ:
         //    figure_value = theApp.m_cpu_freq;
@@ -409,6 +437,9 @@ CString CTaskBarDlg::GetSnapshotValueText(DisplayItem type) const
     case TDI_GPU_USAGE:
         value = CCommon::UsageToString(m_readout_snapshot.gpu_usage, theApp.m_taskbar_data);
         break;
+    case TDI_HDD_USAGE:
+        value = CCommon::UsageToString(m_readout_snapshot.disk_usage, theApp.m_taskbar_data);
+        break;
     default:
         value = CommonDisplayItem(type).GetItemValueText(false);
         break;
@@ -423,14 +454,15 @@ void CTaskBarDlg::UpdateAccessibleWindowTitle()
 
     CString title;
     title.Format(
-        _T("Performance Monitor|seq=%I64u|utc_ms=%I64u|up_Bps=%I64u|down_Bps=%I64u|cpu_pct=%d|ram_pct=%d|gpu_pct=%d"),
+        _T("Performance Monitor|seq=%I64u|utc_ms=%I64u|up_Bps=%I64u|down_Bps=%I64u|cpu_pct=%d|ram_pct=%d|gpu_pct=%d|disk_pct=%d"),
         m_readout_snapshot.sequence,
         m_readout_snapshot.sampled_at_ms,
         m_readout_snapshot.out_speed,
         m_readout_snapshot.in_speed,
         m_readout_snapshot.cpu_usage,
         m_readout_snapshot.memory_usage,
-        m_readout_snapshot.gpu_usage);
+        m_readout_snapshot.gpu_usage,
+        m_readout_snapshot.disk_usage);
     SetWindowText(title);
     m_last_title_sequence = m_readout_snapshot.sequence;
 }
@@ -543,18 +575,19 @@ void CTaskBarDlg::DrawPluginItem(IDrawCommon& drawer, IPluginItem* item, CRect r
 
 void CTaskBarDlg::MoveWindow(CRect rect)
 {
-    if (!IsWindow(GetSafeHwnd()))
+    if (!IsWindow(GetSafeHwnd()) || !::IsWindow(m_hTaskbarHost))
         return;
 
-    if (m_taskbar_overlay_active)
-    {
-        rect.MoveToXY(rect.left + m_rcTaskbar.left, rect.top + m_rcTaskbar.top);
-        ::SetWindowPos(GetSafeHwnd(), nullptr, rect.left, rect.top, rect.Width(), rect.Height(),
-            SWP_NOACTIVATE | SWP_NOZORDER);
+    CRect host_rect;
+    if (!::GetWindowRect(m_hTaskbarHost, host_rect))
         return;
-    }
+    rect.OffsetRect(m_rcTaskbar.left - host_rect.left,
+        m_rcTaskbar.top - host_rect.top);
 
-    ::MoveWindow(GetSafeHwnd(), rect.left, rect.top, rect.Width(), rect.Height(), TRUE);
+    // This HWND is a child of the taskbar's composition bridge. HWND_TOP keeps
+    // it above the XAML surface without activating it.
+    ::SetWindowPos(GetSafeHwnd(), HWND_TOP, rect.left, rect.top,
+        rect.Width(), rect.Height(), SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void CTaskBarDlg::DisableRenderFeatureIfNecessary(CSupportedRenderEnums& ref_supported_render_enums)
@@ -594,6 +627,8 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
 
     if (!::IsWindow(m_hTaskbar))
     {
+        m_taskbar_host_attached = false;
+        m_hTaskbarHost = nullptr;
         bool is_secondary_display{};
         HWND taskbar = FindTaskbarHandle(is_secondary_display);
         if (!::IsWindow(taskbar))
@@ -603,7 +638,7 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
         }
         m_hTaskbar = taskbar;
         m_is_secondary_display = is_secondary_display;
-        if (!ConfigureTaskbarOverlay())
+        if (!AttachToTaskbarHost())
         {
             ShowWindow(SW_HIDE);
             return false;
@@ -611,10 +646,17 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
         force_adjust = true;
     }
 
-    if (!m_taskbar_overlay_active && !ConfigureTaskbarOverlay())
+    const LONG_PTR style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
+    if (!m_taskbar_host_attached || !::IsWindow(m_hTaskbarHost) ||
+        ::GetParent(m_hWnd) != m_hTaskbarHost ||
+        (style & WS_CHILD) == 0 || (style & WS_POPUP) != 0)
     {
-        ShowWindow(SW_HIDE);
-        return false;
+        if (!AttachToTaskbarHost())
+        {
+            ShowWindow(SW_HIDE);
+            return false;
+        }
+        force_adjust = true;
     }
 
     if (!::GetWindowRect(m_hTaskbar, m_rcTaskbar))
@@ -639,7 +681,21 @@ bool CTaskBarDlg::AdjustWindowPos(bool force_adjust)
     }
 
     AdjustTaskbarWndPos(force_adjust);
-    UpdateOverlayVisibility();
+    if (m_taskbar_host_attached && ::IsWindowVisible(m_hTaskbar) &&
+        ::IsWindowVisible(m_hTaskbarHost))
+    {
+        // Explorer can reorder its own taskbar children after opening Start,
+        // Search, or Task Manager. Repair only our child HWND when needed.
+        if (!::IsWindowVisible(m_hWnd) || ::GetWindow(m_hWnd, GW_HWNDPREV) != nullptr)
+        {
+            ::SetWindowPos(m_hWnd, HWND_TOP, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+    }
+    else
+    {
+        ShowWindow(SW_HIDE);
+    }
     m_is_width_changed = false;
     return true;
 }
@@ -774,13 +830,21 @@ HWND CTaskBarDlg::FindTaskbarHandle(bool& is_scendary_display)
     return hTaskbar;
 }
 
-bool CTaskBarDlg::ConfigureTaskbarOverlay()
+bool CTaskBarDlg::AttachToTaskbarHost()
 {
-    m_taskbar_overlay_active = false;
+    m_taskbar_host_attached = false;
     m_connot_insert_to_task_bar = false;
     m_error_code = ERROR_SUCCESS;
 
-    if (!::IsWindow(m_hTaskbar))
+    if (!::IsWindow(m_hWnd) || !::IsWindow(m_hTaskbar))
+    {
+        m_connot_insert_to_task_bar = true;
+        m_error_code = ERROR_INVALID_WINDOW_HANDLE;
+        return false;
+    }
+
+    m_hTaskbarHost = FindTaskbarCompositionHost(m_hTaskbar);
+    if (!::IsWindow(m_hTaskbarHost))
     {
         m_connot_insert_to_task_bar = true;
         m_error_code = ERROR_INVALID_WINDOW_HANDLE;
@@ -789,70 +853,50 @@ bool CTaskBarDlg::ConfigureTaskbarOverlay()
 
     InitTaskbarWnd();
 
-    // Keep the readout in our process as a top-level popup. Parenting it to
-    // Explorer creates a synchronous cross-process window relationship that
-    // can deadlock the taskbar when either UI thread is busy.
-    const LONG_PTR style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
-    ::SetWindowLongPtr(m_hWnd, GWL_STYLE, (style & ~WS_CHILD) | WS_POPUP);
-    ModifyStyleEx(WS_EX_APPWINDOW, WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+    const LONG_PTR original_style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
+    const LONG_PTR original_ex_style = ::GetWindowLongPtr(m_hWnd, GWL_EXSTYLE);
+    const HWND original_parent = ::GetParent(m_hWnd);
+
+    // A genuine WS_CHILD relationship gives the taskbar control of clipping,
+    // fullscreen visibility, and monitor transitions. There is intentionally
+    // no detached desktop-overlay fallback if this attachment fails.
+    ::SetWindowLongPtr(m_hWnd, GWL_STYLE,
+        (original_style & ~WS_POPUP) | WS_CHILD);
+    ::SetWindowLongPtr(m_hWnd, GWL_EXSTYLE,
+        (original_ex_style & ~(WS_EX_APPWINDOW | WS_EX_TOPMOST)) |
+        WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
     ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 
+    ::SetLastError(ERROR_SUCCESS);
+    const HWND previous_parent = ::SetParent(m_hWnd, m_hTaskbarHost);
+    const DWORD set_parent_error = ::GetLastError();
     const LONG_PTR applied_style = ::GetWindowLongPtr(m_hWnd, GWL_STYLE);
-    if ((applied_style & WS_CHILD) != 0 || (applied_style & WS_POPUP) == 0)
+    const bool set_parent_failed =
+        previous_parent == nullptr && set_parent_error != ERROR_SUCCESS;
+    if (set_parent_failed || ::GetParent(m_hWnd) != m_hTaskbarHost ||
+        ::GetAncestor(m_hWnd, GA_ROOT) != m_hTaskbar ||
+        (applied_style & WS_CHILD) == 0 || (applied_style & WS_POPUP) != 0)
     {
         m_connot_insert_to_task_bar = true;
-        m_error_code = ERROR_INVALID_WINDOW_STYLE;
-        return false;
-    }
-
-    m_taskbar_overlay_active = true;
-    return true;
-}
-
-bool CTaskBarDlg::ShouldShowOverlay() const
-{
-    if (!m_taskbar_overlay_active || !::IsWindow(m_hWnd) ||
-        !::IsWindow(m_hTaskbar) || !::IsWindowVisible(m_hTaskbar))
-    {
-        return false;
-    }
-
-    MONITORINFO monitor_info{ sizeof(monitor_info) };
-    HMONITOR monitor = ::MonitorFromWindow(m_hTaskbar, MONITOR_DEFAULTTONEAREST);
-    if (monitor == nullptr || !::GetMonitorInfo(monitor, &monitor_info))
-        return false;
-
-    CRect visible_taskbar;
-    visible_taskbar.IntersectRect(&m_rcTaskbar, &monitor_info.rcMonitor);
-    const int visible_thickness = m_taskbar_on_top_or_bottom ? visible_taskbar.Height() : visible_taskbar.Width();
-    const int expected_thickness = m_taskbar_on_top_or_bottom ? m_rcTaskbar.Height() : m_rcTaskbar.Width();
-    const int min_visible_thickness = min(expected_thickness, max(DPI(8), m_window_height / 2));
-    if (expected_thickness <= 0 || visible_thickness < min_visible_thickness)
-        return false;
-
-    HWND foreground = ::GetForegroundWindow();
-    return foreground == nullptr || foreground == m_hWnd || !CCommon::IsForegroundFullscreen(monitor);
-}
-
-void CTaskBarDlg::UpdateOverlayVisibility()
-{
-    if (!m_taskbar_overlay_active || !::IsWindow(m_hWnd))
-        return;
-
-    if (ShouldShowOverlay())
-    {
-        const LONG_PTR ex_style = ::GetWindowLongPtr(m_hWnd, GWL_EXSTYLE);
-        if (!::IsWindowVisible(m_hWnd) || (ex_style & WS_EX_TOPMOST) == 0)
-        {
-            ::SetWindowPos(m_hWnd, HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        }
-    }
-    else if (::IsWindowVisible(m_hWnd))
-    {
+        m_error_code = set_parent_failed
+            ? static_cast<int>(set_parent_error)
+            : ERROR_INVALID_WINDOW_HANDLE;
         ShowWindow(SW_HIDE);
+        if (::IsWindow(original_parent))
+            ::SetParent(m_hWnd, original_parent);
+        ::SetWindowLongPtr(m_hWnd, GWL_STYLE, original_style);
+        ::SetWindowLongPtr(m_hWnd, GWL_EXSTYLE, original_ex_style);
+        ::SetWindowPos(m_hWnd, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER |
+            SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        return false;
     }
+
+    ::SetWindowPos(m_hWnd, HWND_TOP, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    m_taskbar_host_attached = true;
+    return true;
 }
 
 CString CTaskBarDlg::GetMouseTipsInfo()
@@ -1157,7 +1201,7 @@ BOOL CTaskBarDlg::OnInitDialog()
 
     ApplyWindowTransparentColor();
     if (::IsWindow(m_hTaskbar))
-        ConfigureTaskbarOverlay();
+        AttachToTaskbarHost();
 
     //根据已经确定的任务栏最小化窗口区域得到屏幕并获得所在屏幕的DPI（Windows 8.1及其以上）
     if (theApp.m_win_version.IsWindows8Point1OrLater())
@@ -1435,7 +1479,7 @@ void CTaskBarDlg::OnPaint()
 
 void CTaskBarDlg::AddHisToList(CommonDisplayItem item_type, int current_usage_percent)
 {
-    // The fixed five-readout profile never retains graph or history samples.
+    // The fixed six-readout profile never retains graph or history samples.
     (void)item_type;
     (void)current_usage_percent;
 }
